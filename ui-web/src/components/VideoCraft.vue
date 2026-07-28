@@ -212,14 +212,6 @@ async function loadRecentVideos() {
   }
 }
 
-function emitChain(p) {
-  window.dispatchEvent(new CustomEvent('imaginarium-chain', { detail: p }))
-}
-function emitJobs(job) {
-  window.dispatchEvent(new CustomEvent('imaginarium-to-jobs', { detail: job }))
-  emit('done', job)
-}
-
 async function render() {
   if (!clips.value.length) return null
   error.value = ''
