@@ -85,6 +85,8 @@ pub enum JobMode {
     VideoGenerate,
     VideoEdit,
     VideoExtend,
+    /// Local craft export / library import (no upstream).
+    CraftExport,
 }
 
 impl JobMode {
@@ -95,6 +97,7 @@ impl JobMode {
             Self::VideoGenerate => "video_generate",
             Self::VideoEdit => "video_edit",
             Self::VideoExtend => "video_extend",
+            Self::CraftExport => "craft_export",
         }
     }
 }

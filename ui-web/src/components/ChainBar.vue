@@ -11,6 +11,14 @@
       <button class="btn" type="button" @click="$emit('to-jobs', result)">Jobs</button>
       <button
         v-if="isImage"
+        class="btn"
+        type="button"
+        @click="$emit('chain', { action: 'craft', result })"
+      >
+        → Craft
+      </button>
+      <button
+        v-if="isImage"
         class="btn btn-primary"
         type="button"
         @click="$emit('chain', { action: 'i2v', result })"

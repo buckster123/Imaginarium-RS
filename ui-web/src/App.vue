@@ -45,6 +45,13 @@
           @busy="onBusy"
           @chain-consumed="videoChain = null"
         />
+        <ImageCraft
+          v-show="tab === 'craft'"
+          :chain-payload="craftChain"
+          @done="onJob"
+          @busy="onBusy"
+          @chain-consumed="craftChain = null"
+        />
         <JobBoard v-if="tab === 'jobs'" :flash="flashJob" @select="selectedJob = $event" />
         <LibraryView v-else-if="tab === 'library'" />
         <SettingsView v-else-if="tab === 'settings'" />
@@ -65,6 +72,7 @@ import { toastOk, toastErr } from './toast'
 import TokenGate from './components/TokenGate.vue'
 import ImageStudio from './components/ImageStudio.vue'
 import VideoStudio from './components/VideoStudio.vue'
+import ImageCraft from './components/ImageCraft.vue'
 import JobBoard from './components/JobBoard.vue'
 import LibraryView from './components/LibraryView.vue'
 import SettingsView from './components/SettingsView.vue'
@@ -73,6 +81,7 @@ import ToastHost from './components/ToastHost.vue'
 const tabs = [
   { id: 'image', label: 'Image' },
   { id: 'video', label: 'Video' },
+  { id: 'craft', label: 'Craft' },
   { id: 'jobs', label: 'Jobs' },
   { id: 'library', label: 'Library' },
   { id: 'settings', label: 'Settings' },
@@ -87,6 +96,7 @@ const globalBusy = ref(false)
 const busyLabel = ref('')
 const imageChain = ref(null)
 const videoChain = ref(null)
+const craftChain = ref(null)
 const imageRef = ref(null)
 const videoRef = ref(null)
 
@@ -152,12 +162,20 @@ function handleChain(payload) {
     videoChain.value = { action, result }
     tab.value = 'video'
     toastOk(
-      action === 'i2v' ? 'Loaded still → Video I2V' : action === 'extend' ? 'Loaded clip → Extend' : 'Loaded clip → AI edit'
+      action === 'i2v'
+        ? 'Loaded still → Video I2V'
+        : action === 'extend'
+          ? 'Loaded clip → Extend'
+          : 'Loaded clip → AI edit'
     )
   } else if (action === 'image-edit') {
     imageChain.value = { action, result }
     tab.value = 'image'
     toastOk('Loaded still → Image AI edit')
+  } else if (action === 'craft' || action === 'image-craft') {
+    craftChain.value = { action, result }
+    tab.value = 'craft'
+    toastOk('Loaded still → Image craft')
   }
 }
 

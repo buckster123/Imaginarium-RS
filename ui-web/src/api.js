@@ -56,6 +56,8 @@ export const api = {
   job: (id) => request(`/v1/jobs/${encodeURIComponent(id)}`),
   jobWait: (id) => request(`/v1/jobs/${encodeURIComponent(id)}/wait`, { method: 'POST', body: '{}' }),
   libraryContentUrl: (id) => `/v1/library/${encodeURIComponent(id)}/content`,
+  libraryImport: (body) =>
+    request('/v1/library/import', { method: 'POST', body: JSON.stringify(body) }),
   tokensList: () => request('/v1/tokens'),
   tokenCreate: (body) => request('/v1/tokens', { method: 'POST', body: JSON.stringify(body) }),
   tokenRevoke: (id) => request(`/v1/tokens/${encodeURIComponent(id)}`, { method: 'DELETE' }),

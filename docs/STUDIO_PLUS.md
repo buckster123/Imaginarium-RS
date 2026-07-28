@@ -76,14 +76,13 @@ Browser canvas; export → library via API.
 | Tool | Notes |
 |---|---|
 | Crop / rotate 90 / flip | aspect presets 1:1 16:9 9:16 |
-| Adjust | exposure, contrast, saturation, simple levels |
+| Adjust | exposure, contrast, saturation |
 | Paint + eraser | hard/soft brush, color, size |
-| Mask layer | grayscale mask export for future AI edit-with-mask |
-| Text overlay | basic title/caption |
-| Export | PNG/WebP/JPEG → `POST` new asset or local data-URL → image edit/gen chain |
+| Mask layer | paint black=exclude; export mask PNG |
+| Text overlay | click to place |
+| Export | PNG/JPEG/WebP → `POST /v1/library/import` |
 
-**Stack:** Vue + Canvas 2D (WebGL only if adjust pipeline needs it).  
-**Server:** optional `libvips` later for large stills; v1 can do client-side export + upload path as data-URL to existing edit/library endpoints (or new `POST /v1/library/import`).
+**Status (2026-07-28):** **shipped** — Craft tab + chain `→ Craft` + import API.
 
 ### 5.3 — Video craft MVP (“Kdenlive light”)
 
