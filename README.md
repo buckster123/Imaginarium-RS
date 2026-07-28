@@ -1,87 +1,161 @@
-# Imaginarium-RS
+<div align="center">
 
-Local-first, multi-node **xAI Imagine** gateway — CLI, MCP, LAN-token HTTP API, embedded Vue browser UI, optional Slint native app (later).
+<img src="assets/banner.jpg" alt="Imaginarium-RS" width="100%">
 
-Plan: `~/Projects/plan_drafts/imaginarium-rs.md`
+<h1>Imaginarium-RS</h1>
 
-## Status
+<p><strong>A local-first, multi-node gateway to xAI's Imagine image &amp; video API.</strong><br>
+One Rust workspace — CLI · MCP · LAN-token HTTP API · zero-install browser studio · optional native app.</p>
 
-| Phase | Scope | State |
+<p>
+<img alt="license" src="https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue">
+<img alt="app license" src="https://img.shields.io/badge/native%20app-GPL--3.0-8A2BE2">
+<img alt="rust" src="https://img.shields.io/badge/rust-2021-orange?logo=rust&logoColor=white">
+<img alt="status" src="https://img.shields.io/badge/status-v0.1%20%C2%B7%20local--first-brightgreen">
+</p>
+
+</div>
+
+---
+
+> [!NOTE]
+> **Bring your own key.** Your `XAI_API_KEY` lives on **one** fat node; every other surface — edge Pi, laptop, agent — reaches it over a LAN bearer token and never sees the key. Generated media is downloaded to your **local library** by default: the ephemeral xAI URL may expire, your files won't.
+
+## Why
+
+Some model vendors don't offer image or video generation. xAI's Imagine API does, and its surface is unusually flexible. **Imaginarium-RS** wraps that surface once, in Rust, and exposes it to everything that might want it:
+
+- **agents** — over MCP (stdio) or the HTTP API,
+- **humans** — a zero-install browser studio, or a native desktop/kiosk app,
+- **a home lab** — one node holds the key + disk cache; the rest of the mesh calls it with a token.
+
+Local-first by design, honest about failure, and small enough to run on a spare board.
+
+## Surfaces
+
+| Surface | For | How |
 |---|---|---|
-| 0 | Workspace, config, models catalog | **done** |
-| 1 | Image gen/edit + local library + job DB | **done** |
-| 2 | Video full surface | **done** |
-| 3 | LAN HTTP API + tokens | **done** |
-| 4 | MCP stdio + proxy | **done** |
-| 5 | Vue 3 embedded UI | **done** |
-| 5.x | Studio+ craft (see docs/STUDIO_PLUS.md) | **5.1–5.4 done** |
-| 6 | Slint winit app (GPL) | **6.0–6.1 done** · see docs/SLINT.md |
-| 6+ | ApexOS embed | handoff: docs/APEXOS_IMAGINARIUM.md |
+| **CLI** | scripts &amp; you | `imaginarium image gen …` / `video i2v …` |
+| **MCP** | agents (Claude Code, Hermes, …) | stdio server, or a thin proxy to a fat node |
+| **HTTP API** | anything on the LAN | `POST /v1/images/generations` + a bearer token |
+| **Browser studio** | humans, no install | open `http://<node>:8791/`, paste a token once |
+| **Native app** | desktop &amp; kiosk | Slint (`winit` + `linuxkms`) — separate GPL binary |
 
 ## Quick start
 
 ```bash
 cd ~/Projects/Imaginarium-RS
 cargo build -p imaginarium-cli
-export XAI_API_KEY=...
+export XAI_API_KEY=...            # or set upstream.api_key in the config
 
-./target/debug/imaginarium models
-./target/debug/imaginarium image gen -p "marble amphitheater golden hour" --model quality --ar 16:9
+# Images
+imaginarium image gen  -p "marble amphitheater, golden hour" --model quality --ar 16:9
+imaginarium image edit --image ./a.png -p "noir, rain-slick streets"
 
-# Video (blocks until done by default; use --no-wait + status/wait)
-./target/debug/imaginarium video gen -p "camera orbit over a hillside amphitheater" --duration 8 --res 720p
-./target/debug/imaginarium video i2v --image ./still.png -p "slow pan out" --res 1080p
-./target/debug/imaginarium video ref -p "model walks the runway" --ref a.png --ref b.png
-./target/debug/imaginarium video edit --video ./clip.mp4 -p "add golden hour light"
-./target/debug/imaginarium video extend --video ./clip.mp4 --duration 6 -p "continue the pan"
-./target/debug/imaginarium video status <job_id>
-./target/debug/imaginarium video wait <job_id>
+# Video (blocks until done by default; add --no-wait + status/wait for long jobs)
+imaginarium video gen    -p "camera orbit over a hillside amphitheater" --duration 8 --res 720p
+imaginarium video i2v    --image ./still.png -p "slow pan out" --model 1.5 --res 1080p
+imaginarium video extend --video ./clip.mp4 --duration 6 -p "continue the pan"
 
-# Studio UI (embedded SPA)
-export IMAGINARIUM_TOKEN=$(openssl rand -hex 24)   # or: imaginarium token create
-./target/debug/imaginarium serve --bind 127.0.0.1:8791
-# open http://127.0.0.1:8791/  — paste token once (sessionStorage)
+# Serve the studio + API (loopback by default; LAN needs an explicit bind + token)
+export IMAGINARIUM_TOKEN=$(openssl rand -hex 24)
+imaginarium serve --bind 127.0.0.1:8791          # → http://127.0.0.1:8791
 
-# Native Slint UI (winit laptop) — GPL binary, separate crate
-cargo build -p imaginarium-slint
-export IMAGINARIUM_URL=http://127.0.0.1:8791
-export IMAGINARIUM_TOKEN=...   # same token as browser
-./target/debug/imaginarium-app
+# MCP for agents (holds the key locally)…
+imaginarium mcp
+# …or a thin edge proxy that forwards to a fat node (no key on the edge)
+imaginarium mcp --proxy http://192.168.0.10:8791
 ```
 
 Assets land in `~/.local/share/imaginarium/library/YYYY/MM/DD/<job_id>/`.
 
-ApexOS embed handoff: `docs/APEXOS_IMAGINARIUM.md` · Slint notes: `docs/SLINT.md`.
+## Models
 
-## Layout
+Capability matrix lives once in `imaginarium-core::models` and is consumed by CLI, API, MCP, and UI.
+
+| Model | Modes | Max res | ~Cost |
+|---|---|---|---|
+| `grok-imagine-image` | text→image, edit | 2k | ~$0.02 / image |
+| `grok-imagine-image-quality` | text→image, edit | 2k | ~$0.05 / image |
+| `grok-imagine-video` | T2V · I2V · R2V · edit · extend | 720p | ~$0.05 / sec |
+| `grok-imagine-video-1.5` | image→video only | **1080p** | ~$0.08 / sec |
+
+Pass `--model auto` (or omit it) and the server picks a sensible default — video auto-selects `video-1.5` when you hand it an image, `video` otherwise.
+
+## Multi-node
+
+```
+        ┌─────────────────────────────┐
+        │  Imaginarium NODE (fat)     │
+        │  · XAI_API_KEY              │
+        │  · disk library + job DB    │
+        │  · axum :8791 (API + UI)    │
+        │  · MCP stdio                │
+        └────────────▲────────────────┘
+                     │  LAN + bearer token
+        ┌────────────┼───────────┬───────────────┐
+     Claude Code   Edge Pi     Browser        Slint app
+      (MCP/HTTP)  (HTTP/MCP    (zero install)  (HTTP client)
+                   proxy)
+```
+
+The key stays on the fat node; edge nodes and clients only ever hold a token. See [`docs/MULTI_NODE.md`](docs/MULTI_NODE.md).
+
+## Repository layout
 
 ```
 crates/
-  imaginarium-core/     # client, models, config, jobs, library (MIT/Apache)
-  imaginarium-cli/      # `imaginarium` binary
-  imaginarium-mcp/      # MCP stdio
-  imaginarium-server/   # LAN API + rust-embed Vue UI
-  imaginarium-slint/    # Phase 6 GPL app (not in default workspace)
-ui-web/                 # Vue 3 source + committed dist/
-docs/
-openapi/
+  imaginarium-core/    # client, models, config, jobs, library     (MIT/Apache)
+  imaginarium-cli/     # the `imaginarium` binary                   (MIT/Apache)
+  imaginarium-mcp/     # MCP stdio server (+ fat-node proxy)        (MIT/Apache)
+  imaginarium-server/  # axum LAN API + embedded Vue studio         (MIT/Apache)
+  imaginarium-slint/   # native winit/kms app                       (GPL-3.0)
+ui-web/                # Vue 3 studio (source + committed dist/)
+openapi/               # imaginarium-v1.yaml — the HTTP contract
+docs/                  # architecture, multi-node, licensing, ApexOS embed
 ```
 
-Rebuild UI after SPA edits:
-```bash
-cd ui-web && npm ci && npm run build && cargo build -p imaginarium-cli
-```
+<details>
+<summary><strong>Full HTTP surface</strong> (see <code>openapi/imaginarium-v1.yaml</code>)</summary>
 
-## Config
+`GET /health` · `GET /v1/models` · `POST /v1/estimate` ·
+`POST /v1/images/{generations,edits}` ·
+`POST /v1/videos/{generations,edits,extensions}` ·
+`GET /v1/jobs` · `GET /v1/jobs/{id}` · `POST /v1/jobs/{id}/wait` ·
+`GET /v1/library/{id}/content` · `POST /v1/library/import` ·
+`POST /v1/craft/video/render` · `GET|POST /v1/tokens` · `DELETE /v1/tokens/{id}`
 
-- Config: `$IMAGINARIUM_CONFIG` or `~/.config/imaginarium/config.toml`
-- Data: `$IMAGINARIUM_HOME` or `~/.local/share/imaginarium/`
-- Upstream key: `XAI_API_KEY` (or `upstream.api_key` in config — discouraged)
-- Node auth: `IMAGINARIUM_TOKEN` or minted `imaginarium token create`
+Auth on every `/v1/*` route (any one): `Authorization: Bearer <token>`,
+`X-Imaginarium-Token: <token>`, or `?token=<token>`. Scopes: `read` · `write` · `admin`.
+</details>
 
-Default bind for future serve: `127.0.0.1:8791`
+## Security posture
+
+- Default bind is loopback `127.0.0.1:8791`. A non-loopback bind **refuses to start without a token**.
+- Tokens are stored as hashes; the plaintext is shown once at mint. The upstream xAI key is never returned by the API and never logged.
+- Media inputs from the network accept only `data:` / `http(s):` / `file_…` refs — bare local paths are the CLI's privilege alone.
+
+See [`SECURITY.md`](SECURITY.md) for the trust model and the hardening notes.
+
+## Configuration
+
+| What | Where |
+|---|---|
+| Config | `$IMAGINARIUM_CONFIG` or `~/.config/imaginarium/config.toml` |
+| Data / library | `$IMAGINARIUM_HOME` or `~/.local/share/imaginarium/` |
+| Upstream key | `XAI_API_KEY` (or `upstream.api_key` in config — discouraged) |
+| Node / mesh token | `IMAGINARIUM_TOKEN`, or `imaginarium token create` |
 
 ## License
 
-- Headless stack (core, cli, mcp, server): **MIT OR Apache-2.0**
-- `imaginarium-slint` / `imaginarium-app`: **GPL-3.0-only** (see `docs/LICENSING.md`)
+- Headless stack (`core`, `cli`, `mcp`, `server`, embedded web assets): **MIT OR Apache-2.0**.
+- Native app (`imaginarium-slint` / `imaginarium-app`): **GPL-3.0-only**.
+
+Shipping the headless node stays permissive; shipping the native GUI carries GPL obligations for that binary. Details in [`docs/LICENSING.md`](docs/LICENSING.md).
+
+---
+
+<div align="center">
+<sub>xAI Imagine usage is subject to xAI's terms. Imaginarium-RS is an independent client — not affiliated with xAI.<br>
+🖼️ <em>The banner above was generated by Imaginarium-RS itself, via <code>grok-imagine-image-quality</code>.</em></sub>
+</div>
