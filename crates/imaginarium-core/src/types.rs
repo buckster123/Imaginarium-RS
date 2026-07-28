@@ -4,6 +4,8 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use ulid::Ulid;
 
+use crate::error::{Error, Result};
+
 /// Local primary job identifier (ULID string).
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(transparent)]
@@ -219,5 +221,71 @@ impl MediaRef {
                 path: t.to_string(),
             }
         }
+    }
+
+    /// Parse a media ref from a NETWORK or agent caller.
+    ///
+    /// Unlike `from_user_input`, this never yields a local-filesystem `Path`.
+    /// Accepting a bare path from a remote / token-authenticated caller would let it
+    /// read arbitrary node-local files (which the client then base64-encodes and
+    /// ships upstream) — the highest-severity finding of the 2026-07-28 audit. Bare
+    /// paths are rejected; callers must pass a `data:` URL, an `http(s):` URL, or an
+    /// xAI `file_…` id. Keep `from_user_input` (which accepts local paths) for the
+    /// local CLI only.
+    pub fn from_remote_input(s: &str) -> Result<Self> {
+        let t = s.trim();
+        if t.is_empty() {
+            return Err(Error::forbidden("empty media reference"));
+        }
+        if t.starts_with("file_") {
+            Ok(Self::FileId {
+                file_id: t.to_string(),
+            })
+        } else if t.starts_with("http://") || t.starts_with("https://") || t.starts_with("data:") {
+            Ok(Self::Url { url: t.to_string() })
+        } else {
+            Err(Error::forbidden(format!(
+                "local filesystem paths are not accepted from remote callers; \
+                 use a data: URL, an http(s) URL, or an xAI file_… id (got: {})",
+                t.chars().take(40).collect::<String>()
+            )))
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn remote_input_rejects_local_paths() {
+        assert!(MediaRef::from_remote_input("/etc/shadow").is_err());
+        assert!(MediaRef::from_remote_input("relative/thing.png").is_err());
+        assert!(MediaRef::from_remote_input("thing.png").is_err());
+        assert!(MediaRef::from_remote_input("   ").is_err());
+    }
+
+    #[test]
+    fn remote_input_allows_url_data_fileid() {
+        assert!(matches!(
+            MediaRef::from_remote_input("https://x/y.png"),
+            Ok(MediaRef::Url { .. })
+        ));
+        assert!(matches!(
+            MediaRef::from_remote_input("data:image/png;base64,AAAA"),
+            Ok(MediaRef::Url { .. })
+        ));
+        assert!(matches!(
+            MediaRef::from_remote_input("file_abc123"),
+            Ok(MediaRef::FileId { .. })
+        ));
+    }
+
+    #[test]
+    fn user_input_still_accepts_local_paths() {
+        assert!(matches!(
+            MediaRef::from_user_input("/tmp/a.png"),
+            MediaRef::Path { .. }
+        ));
     }
 }

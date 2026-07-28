@@ -74,6 +74,10 @@ pub struct VideoTimeline {
 
 /// Resolve first media file for a job under library root (YYYY/MM/DD/job_id/).
 pub fn resolve_job_media(library_root: &Path, job_id: &str) -> Option<PathBuf> {
+    // Never join an unsafe id onto the filesystem (path-traversal guard).
+    if !crate::library::is_safe_asset_id(job_id) {
+        return None;
+    }
     if !library_root.is_dir() {
         return None;
     }
@@ -144,6 +148,9 @@ pub fn render_timeline(
 
     let mut sources: Vec<(PathBuf, &TimelineClip)> = Vec::new();
     for c in &timeline.clips {
+        if !crate::library::is_safe_asset_id(&c.job_id) {
+            return Err(Error::forbidden(format!("invalid job_id: {}", c.job_id)));
+        }
         let path = resolve_job_media(library_root, &c.job_id)
             .ok_or_else(|| Error::other(format!("no local media for job_id {}", c.job_id)))?;
         sources.push((path, c));
@@ -231,7 +238,7 @@ fn render_single(path: &Path, clip: &TimelineClip, tl: &VideoTimeline, out: &Pat
     for ov in &tl.overlays {
         let escaped = escape_drawtext(&ov.text);
         vf.push(format!(
-            "drawtext=text='{escaped}':x={}:y={}:fontsize={}:fontcolor=white:borderw=2:bordercolor=black:enable='between(t\\,{:.3}\\,{:.3})'",
+            "drawtext=text='{escaped}':expansion=none:x={}:y={}:fontsize={}:fontcolor=white:borderw=2:bordercolor=black:enable='between(t\\,{:.3}\\,{:.3})'",
             ov.x, ov.y, ov.fontsize, ov.start_s, ov.end_s
         ));
     }
@@ -346,9 +353,41 @@ fn run_ffmpeg(args: &[String]) -> Result<()> {
     Ok(())
 }
 
+/// Escape caption text for ffmpeg's `drawtext=text='…'` single-quoted argument.
+///
+/// ffmpeg single-quoted strings treat every byte literally until the next `'`, and a
+/// backslash does NOT escape the quote inside them — so the previous `'`→`\'` mapping
+/// both rendered wrong (a literal backslash appeared) AND let crafted caption text
+/// close the quote and inject filtergraph filters/options. The only correct way to
+/// embed a literal `'` is to close the quote, emit an escaped quote, and reopen:
+/// `'` → `'\''`. Paired with `:expansion=none` on the filter (which disables
+/// drawtext's own `%`/`\` text expansion), all caption text stays inert.
 fn escape_drawtext(s: &str) -> String {
-    s.replace('\\', "\\\\")
-        .replace(':', "\\:")
-        .replace('\'', "\\'")
-        .replace('%', "%%")
+    s.replace('\'', "'\\''")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn drawtext_escaping_is_ffmpeg_correct() {
+        // apostrophe: close-quote, escaped-quote, reopen
+        assert_eq!(escape_drawtext("it's"), "it'\\''s");
+    }
+
+    #[test]
+    fn drawtext_escaping_neutralizes_injection() {
+        // an attempt to break out of text='…' into the filtergraph stays quoted text
+        let e = escape_drawtext("x':drawtext=fontfile=/etc/passwd");
+        assert!(e.starts_with("x'\\''"));
+        // the injected metacharacters survive only as literal caption content
+        assert!(e.contains(":drawtext=fontfile=/etc/passwd"));
+    }
+
+    #[test]
+    fn safe_ids_gate_craft() {
+        assert!(!crate::library::is_safe_asset_id("../../etc"));
+        assert!(crate::library::is_safe_asset_id("01ABCDEF"));
+    }
 }
