@@ -45,7 +45,7 @@
           @busy="onBusy"
           @chain-consumed="videoChain = null"
         />
-        <ImageCraft
+        <CraftShell
           v-show="tab === 'craft'"
           :chain-payload="craftChain"
           @done="onJob"
@@ -72,7 +72,7 @@ import { toastOk, toastErr } from './toast'
 import TokenGate from './components/TokenGate.vue'
 import ImageStudio from './components/ImageStudio.vue'
 import VideoStudio from './components/VideoStudio.vue'
-import ImageCraft from './components/ImageCraft.vue'
+import CraftShell from './components/CraftShell.vue'
 import JobBoard from './components/JobBoard.vue'
 import LibraryView from './components/LibraryView.vue'
 import SettingsView from './components/SettingsView.vue'
@@ -176,6 +176,10 @@ function handleChain(payload) {
     craftChain.value = { action, result }
     tab.value = 'craft'
     toastOk('Loaded still → Image craft')
+  } else if (action === 'video-craft' || action === 'craft-video') {
+    craftChain.value = { action, result }
+    tab.value = 'craft'
+    toastOk('Loaded clip → Video craft')
   }
 }
 

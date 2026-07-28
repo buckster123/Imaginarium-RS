@@ -14,7 +14,7 @@ Plan: `~/Projects/plan_drafts/imaginarium-rs.md`
 | 3 | LAN HTTP API + tokens | **done** |
 | 4 | MCP stdio + proxy | **done** |
 | 5 | Vue 3 embedded UI | **done** |
-| 5.x | Studio+ craft (see docs/STUDIO_PLUS.md) | **5.1+5.2 done** · 5.3 next |
+| 5.x | Studio+ craft (see docs/STUDIO_PLUS.md) | **5.1–5.3 done** · 5.4 next |
 | 6 | Slint winit/kms app (GPL) | pending |
 
 ## Quick start

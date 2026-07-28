@@ -35,6 +35,14 @@
       </button>
       <button
         v-if="isVideo"
+        class="btn"
+        type="button"
+        @click="$emit('chain', { action: 'video-craft', result })"
+      >
+        → Video craft
+      </button>
+      <button
+        v-if="isVideo"
         class="btn btn-primary"
         type="button"
         @click="$emit('chain', { action: 'extend', result })"

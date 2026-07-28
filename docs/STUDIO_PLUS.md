@@ -90,19 +90,13 @@ Browser timeline UI; **encode on fat node via ffmpeg**.
 
 | Tool | Notes |
 |---|---|
-| Import 1–N library clips | from job ids / upload |
-| Trim in/out per clip | frame-ish via seconds UI |
-| Ordered cut list | simple single-track |
-| Fade audio / fade video | ffmpeg afade/xfade or fade filters |
-| Volume | per-clip gain |
-| Text / image overlay | drawtext, overlay — limited fonts on node |
-| Export | EDL/JSON decision list → `POST /v1/craft/video/render` → job + mp4 in library |
+| Import clips by job id | recent-jobs helper |
+| Trim in/out · order · gain dB | single track |
+| Audio/video fades | ffmpeg afade / fade |
+| Text overlay | drawtext |
+| Export | `POST /v1/craft/video/render` → library mp4 |
 
-**Stack:**
-- UI: lightweight timeline component (custom divs; no full OE-like engine)
-- Server: `ffmpeg` on PATH (document dependency); spawn with timeout; progress via job poll
-- Never block agent context with base64 video
-
+**Status (2026-07-28):** **shipped** — Craft → Video craft tab + chain `→ Video craft`.
 ### 5.4 — AI ↔ craft closed loop
 
 - Image craft mask → AI image edit (when API supports mask / as soft guide in prompt+ref)

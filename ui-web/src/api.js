@@ -58,6 +58,8 @@ export const api = {
   libraryContentUrl: (id) => `/v1/library/${encodeURIComponent(id)}/content`,
   libraryImport: (body) =>
     request('/v1/library/import', { method: 'POST', body: JSON.stringify(body) }),
+  craftVideoRender: (body) =>
+    request('/v1/craft/video/render', { method: 'POST', body: JSON.stringify(body) }),
   tokensList: () => request('/v1/tokens'),
   tokenCreate: (body) => request('/v1/tokens', { method: 'POST', body: JSON.stringify(body) }),
   tokenRevoke: (id) => request(`/v1/tokens/${encodeURIComponent(id)}`, { method: 'DELETE' }),

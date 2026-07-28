@@ -38,6 +38,7 @@ pub fn api_router(state: AppState, _allow_localhost_no_auth: bool) -> Router {
         .route("/v1/jobs/{id}/wait", post(jobs_wait))
         .route("/v1/library/{id}/content", get(library_content))
         .route("/v1/library/import", post(library_import))
+        .route("/v1/craft/video/render", post(craft_video_render))
         .route("/v1/tokens", get(tokens_list).post(tokens_create))
         .route("/v1/tokens/{id}", delete(tokens_revoke))
         .route_layer(axum::middleware::from_fn_with_state(
@@ -389,7 +390,10 @@ struct LibraryImportBody {
     source_job_id: Option<String>,
 }
 
-async fn library_import(State(state): State<AppState>, Json(body): Json<LibraryImportBody>) -> Response {
+async fn library_import(
+    State(state): State<AppState>,
+    Json(body): Json<LibraryImportBody>,
+) -> Response {
     let (bytes, ext) = match imaginarium_core::library::decode_data_url_or_b64(&body.data) {
         Ok(v) => v,
         Err(e) => return err_response(StatusCode::BAD_REQUEST, e),
@@ -397,9 +401,7 @@ async fn library_import(State(state): State<AppState>, Json(body): Json<LibraryI
     if bytes.len() > 40 * 1024 * 1024 {
         return err_response(StatusCode::PAYLOAD_TOO_LARGE, "max 40MB import");
     }
-    let filename = body
-        .filename
-        .unwrap_or_else(|| format!("import.{ext}"));
+    let filename = body.filename.unwrap_or_else(|| format!("import.{ext}"));
     let jobs = match JobStore::open(&state.cfg.db_path()) {
         Ok(j) => j,
         Err(e) => return err_response(StatusCode::INTERNAL_SERVER_ERROR, e),
@@ -413,6 +415,28 @@ async fn library_import(State(state): State<AppState>, Json(body): Json<LibraryI
     ) {
         Ok(r) => Json(r).into_response(),
         Err(e) => err_response(StatusCode::INTERNAL_SERVER_ERROR, e),
+    }
+}
+
+async fn craft_video_render(
+    State(state): State<AppState>,
+    Json(body): Json<imaginarium_core::craft_video::VideoTimeline>,
+) -> Response {
+    let jobs = match JobStore::open(&state.cfg.db_path()) {
+        Ok(j) => j,
+        Err(e) => return err_response(StatusCode::INTERNAL_SERVER_ERROR, e),
+    };
+    let lib_root = state.cfg.library_dir();
+    // ffmpeg is blocking — run off the async worker.
+    let library = state.library.clone();
+    let result = tokio::task::spawn_blocking(move || {
+        imaginarium_core::craft_video::render_timeline(&library, &jobs, &lib_root, &body)
+    })
+    .await;
+    match result {
+        Ok(Ok(job)) => Json(job).into_response(),
+        Ok(Err(e)) => err_response(StatusCode::BAD_REQUEST, e),
+        Err(e) => err_response(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()),
     }
 }
 

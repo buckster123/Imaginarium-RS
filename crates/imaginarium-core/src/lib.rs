@@ -2,6 +2,7 @@
 
 pub mod client;
 pub mod config;
+pub mod craft_video;
 pub mod error;
 pub mod estimate;
 pub mod jobs;
