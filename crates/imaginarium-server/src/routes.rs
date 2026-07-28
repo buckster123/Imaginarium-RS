@@ -25,7 +25,7 @@ pub fn public_router() -> Router {
 }
 
 pub fn api_router(state: AppState, _allow_localhost_no_auth: bool) -> Router {
-    let gated = Router::new()
+    Router::new()
         .route("/v1/models", get(models))
         .route("/v1/estimate", post(estimate_handler))
         .route("/v1/images/generations", post(image_gen))
@@ -43,8 +43,7 @@ pub fn api_router(state: AppState, _allow_localhost_no_auth: bool) -> Router {
             state.clone(),
             require_auth,
         ))
-        .with_state(state);
-    gated
+        .with_state(state)
 }
 
 fn err_response(status: StatusCode, msg: impl ToString) -> Response {
