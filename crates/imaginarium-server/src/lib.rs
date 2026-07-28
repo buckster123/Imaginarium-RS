@@ -1,7 +1,8 @@
-//! LAN HTTP API for Imaginarium-RS (Phase 3).
+//! LAN HTTP API for Imaginarium-RS (Phase 3 + Phase 5 UI).
 
 mod auth;
 mod routes;
+mod static_files;
 
 use std::net::SocketAddr;
 use std::path::PathBuf;
@@ -76,6 +77,7 @@ pub async fn serve(cfg: Config, opts: ServeOptions) -> Result<()> {
     let app = Router::new()
         .merge(routes::public_router())
         .merge(api_router(state.clone(), opts.allow_localhost_no_auth))
+        .merge(static_files::static_router())
         .layer(TraceLayer::new_for_http())
         .layer(cors);
 
@@ -83,7 +85,7 @@ pub async fn serve(cfg: Config, opts: ServeOptions) -> Result<()> {
         .bind
         .parse()
         .with_context(|| format!("invalid bind address: {}", opts.bind))?;
-    info!(%addr, "imaginarium listening");
+    info!(%addr, "imaginarium listening (API + UI)");
     let listener = tokio::net::TcpListener::bind(addr).await?;
     axum::serve(listener, app).await?;
     Ok(())

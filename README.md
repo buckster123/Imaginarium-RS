@@ -1,6 +1,6 @@
 # Imaginarium-RS
 
-Local-first, multi-node **xAI Imagine** gateway — CLI, MCP (soon), LAN-token HTTP API (soon), Vue browser UI (soon), optional Slint native app (later).
+Local-first, multi-node **xAI Imagine** gateway — CLI, MCP, LAN-token HTTP API, embedded Vue browser UI, optional Slint native app (later).
 
 Plan: `~/Projects/plan_drafts/imaginarium-rs.md`
 
@@ -13,7 +13,7 @@ Plan: `~/Projects/plan_drafts/imaginarium-rs.md`
 | 2 | Video full surface | **done** |
 | 3 | LAN HTTP API + tokens | **done** |
 | 4 | MCP stdio + proxy | **done** |
-| 5 | Vue 3 embedded UI | pending |
+| 5 | Vue 3 embedded UI | **done** |
 | 6 | Slint winit/kms app (GPL) | pending |
 
 ## Quick start
@@ -34,6 +34,11 @@ export XAI_API_KEY=...
 ./target/debug/imaginarium video extend --video ./clip.mp4 --duration 6 -p "continue the pan"
 ./target/debug/imaginarium video status <job_id>
 ./target/debug/imaginarium video wait <job_id>
+
+# Studio UI (embedded SPA)
+export IMAGINARIUM_TOKEN=$(openssl rand -hex 24)   # or: imaginarium token create
+./target/debug/imaginarium serve --bind 127.0.0.1:8791
+# open http://127.0.0.1:8791/  — paste token once (sessionStorage)
 ```
 
 Assets land in `~/.local/share/imaginarium/library/YYYY/MM/DD/<job_id>/`.
@@ -44,12 +49,17 @@ Assets land in `~/.local/share/imaginarium/library/YYYY/MM/DD/<job_id>/`.
 crates/
   imaginarium-core/     # client, models, config, jobs, library (MIT/Apache)
   imaginarium-cli/      # `imaginarium` binary
-  imaginarium-mcp/      # Phase 4
-  imaginarium-server/   # Phase 3/5
+  imaginarium-mcp/      # MCP stdio
+  imaginarium-server/   # LAN API + rust-embed Vue UI
   imaginarium-slint/    # Phase 6 GPL app (not in default workspace)
-ui-web/                 # Vue 3 (Phase 5)
+ui-web/                 # Vue 3 source + committed dist/
 docs/
 openapi/
+```
+
+Rebuild UI after SPA edits:
+```bash
+cd ui-web && npm ci && npm run build && cargo build -p imaginarium-cli
 ```
 
 ## Config
@@ -57,6 +67,7 @@ openapi/
 - Config: `$IMAGINARIUM_CONFIG` or `~/.config/imaginarium/config.toml`
 - Data: `$IMAGINARIUM_HOME` or `~/.local/share/imaginarium/`
 - Upstream key: `XAI_API_KEY` (or `upstream.api_key` in config — discouraged)
+- Node auth: `IMAGINARIUM_TOKEN` or minted `imaginarium token create`
 
 Default bind for future serve: `127.0.0.1:8791`
 
