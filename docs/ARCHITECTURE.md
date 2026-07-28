@@ -365,7 +365,7 @@ imaginarium video gen -p "..."    # hits remote node, no local xAI key
 
 ## 8. HTTP API (node)
 
-Versioned under `/v1`. OpenAPI shipped.
+Versioned under `/v1`. **`openapi/imaginarium-v1.yaml` is the shipped-route source of truth** (regenerated 2026-07-28). The sketch in §8.1 is the original design — some entries (SSE `/v1/jobs/{id}/events`, library list/get/delete/upload, `GET /v1/videos/{id}` poll, per-token rate limits) are **not yet implemented**; see the "Not in v1" note in `docs/APEXOS_IMAGINARIUM.md`.
 
 ### 8.1 Core
 
