@@ -5,7 +5,7 @@ members = [
     "crates/imaginarium-cli",
     "crates/imaginarium-mcp",
     "crates/imaginarium-server",
-    # "crates/imaginarium-slint",  # Phase 6 — GPL app, enable when scaffolding native UI
+    "crates/imaginarium-slint", # GPL app — not in default-members
 ]
 default-members = [
     "crates/imaginarium-core",

@@ -1,0 +1,282 @@
+// Imaginarium native shell — Phase 6.0/6.1 (winit)
+
+import { Button, LineEdit, ScrollView, Spinner, VerticalBox, HorizontalBox, GridBox, StandardButton } from "std-widgets.slint";
+
+export struct JobRow {
+    id: string,
+    mode: string,
+    status: string,
+    summary: string,
+}
+
+export component AppWindow inherits Window {
+    title: "Imaginarium";
+    preferred-width: 1100px;
+    preferred-height: 720px;
+    min-width: 800px;
+    min-height: 560px;
+    background: #0f1218;
+
+    // ── connection ──────────────────────────────────────────
+    in-out property <string> base-url: "http://127.0.0.1:8791";
+    in-out property <string> token: "";
+    in-out property <string> conn-status: "disconnected";
+    in-out property <bool> busy: false;
+    in-out property <string> status-line: "Connect to a fat node to generate.";
+
+    // ── generate ────────────────────────────────────────────
+    in-out property <string> prompt: "";
+    in-out property <string> model: "auto";
+    in-out property <int> n-images: 1;
+    in-out property <string> aspect: "auto";
+    in-out property <string> resolution: "1k";
+
+    // ── result ──────────────────────────────────────────────
+    in-out property <string> last-job-id: "";
+    in-out property <string> last-status: "";
+    in-out property <image> preview-image;
+    in-out property <bool> has-preview: false;
+
+    // ── jobs ────────────────────────────────────────────────
+    in property <[JobRow]> jobs: [];
+
+    callback connect-clicked();
+    callback generate-clicked();
+    callback refresh-jobs-clicked();
+    callback open-job-clicked(string);
+    callback open-browser-clicked();
+
+    pure function status-color() -> color {
+        if root.conn-status == "ok" { return #6bcb77; }
+        if root.conn-status == "error" { return #e85d5d; }
+        return #9aa3b5;
+    }
+
+    VerticalBox {
+        padding: 14px;
+        spacing: 12px;
+
+        // Header
+        HorizontalBox {
+            spacing: 10px;
+            Text {
+                text: "Imaginarium";
+                color: #e8e4d9;
+                font-size: 22px;
+                font-weight: 700;
+            }
+            Text {
+                text: "native · winit · Phase 6";
+                color: #9aa3b5;
+                font-size: 12px;
+                vertical-alignment: center;
+            }
+            Rectangle { horizontal-stretch: 1; background: transparent; }
+            Text {
+                text: root.conn-status;
+                color: root.status-color();
+                font-size: 13px;
+                font-weight: 600;
+                vertical-alignment: center;
+            }
+            if root.busy: Spinner { }
+        }
+
+        // Connect bar
+        Rectangle {
+            background: #171c26;
+            border-radius: 10px;
+            border-width: 1px;
+            border-color: #2a3344;
+            VerticalBox {
+                padding: 12px;
+                spacing: 8px;
+                Text { text: "Node"; color: #d4a84b; font-size: 13px; font-weight: 600; }
+                HorizontalBox {
+                    spacing: 8px;
+                    VerticalBox {
+                        spacing: 4px;
+                        Text { text: "Base URL"; color: #9aa3b5; font-size: 11px; }
+                        base := LineEdit {
+                            text <=> root.base-url;
+                            placeholder-text: "http://127.0.0.1:8791";
+                            horizontal-stretch: 1;
+                        }
+                    }
+                    VerticalBox {
+                        spacing: 4px;
+                        Text { text: "Token"; color: #9aa3b5; font-size: 11px; }
+                        tok := LineEdit {
+                            text <=> root.token;
+                            placeholder-text: "IMAGINARIUM_TOKEN or img_…";
+                            horizontal-stretch: 1;
+                            input-type: password;
+                        }
+                    }
+                    Button {
+                        text: "Connect";
+                        primary: true;
+                        clicked => { root.connect-clicked(); }
+                    }
+                    Button {
+                        text: "Browser studio";
+                        clicked => { root.open-browser-clicked(); }
+                    }
+                }
+            }
+        }
+
+        HorizontalBox {
+            spacing: 12px;
+            // Generate panel
+            Rectangle {
+                horizontal-stretch: 1;
+                background: #171c26;
+                border-radius: 10px;
+                border-width: 1px;
+                border-color: #2a3344;
+                VerticalBox {
+                    padding: 12px;
+                    spacing: 8px;
+                    Text { text: "Image generate"; color: #e8e4d9; font-size: 16px; font-weight: 600; }
+                    Text { text: "Prompt"; color: #9aa3b5; font-size: 11px; }
+                    prompt-edit := LineEdit {
+                        text <=> root.prompt;
+                        placeholder-text: "Describe the still…";
+                        min-height: 36px;
+                    }
+                    HorizontalBox {
+                        spacing: 8px;
+                        VerticalBox {
+                            Text { text: "Model"; color: #9aa3b5; font-size: 11px; }
+                            LineEdit { text <=> root.model; }
+                        }
+                        VerticalBox {
+                            Text { text: "Aspect"; color: #9aa3b5; font-size: 11px; }
+                            LineEdit { text <=> root.aspect; }
+                        }
+                        VerticalBox {
+                            Text { text: "Resolution"; color: #9aa3b5; font-size: 11px; }
+                            LineEdit { text <=> root.resolution; }
+                        }
+                    }
+                    HorizontalBox {
+                        spacing: 8px;
+                        Button {
+                            text: root.busy ? "Working…" : "Generate";
+                            primary: true;
+                            enabled: !root.busy && root.prompt != "";
+                            clicked => { root.generate-clicked(); }
+                        }
+                        Button {
+                            text: "Refresh jobs";
+                            clicked => { root.refresh-jobs-clicked(); }
+                        }
+                    }
+                    Text {
+                        text: root.status-line;
+                        color: #9aa3b5;
+                        font-size: 12px;
+                        wrap: word-wrap;
+                    }
+                    if root.last-job-id != "": HorizontalBox {
+                        Text { text: "Job " + root.last-job-id; color: #d4a84b; font-size: 12px; font-family: "monospace"; }
+                        Text { text: root.last-status; color: #6bcb77; font-size: 12px; }
+                    }
+                }
+            }
+
+            // Preview
+            Rectangle {
+                horizontal-stretch: 1;
+                background: #171c26;
+                border-radius: 10px;
+                border-width: 1px;
+                border-color: #2a3344;
+                VerticalBox {
+                    padding: 12px;
+                    spacing: 8px;
+                    Text { text: "Preview"; color: #e8e4d9; font-size: 16px; font-weight: 600; }
+                    if root.has-preview: Image {
+                        source: root.preview-image;
+                        min-height: 280px;
+                        horizontal-stretch: 1;
+                        vertical-stretch: 1;
+                        image-fit: contain;
+                    }
+                    if !root.has-preview: Rectangle {
+                        min-height: 280px;
+                        background: #0a0c10;
+                        border-radius: 8px;
+                        Text {
+                            text: "Result still appears here";
+                            color: #9aa3b5;
+                            horizontal-alignment: center;
+                            vertical-alignment: center;
+                            width: 100%;
+                            height: 100%;
+                        }
+                    }
+                    if root.last-job-id != "": Button {
+                        text: "Reload preview for job";
+                        clicked => { root.open-job-clicked(root.last-job-id); }
+                    }
+                }
+            }
+        }
+
+        // Jobs
+        Rectangle {
+            background: #171c26;
+            border-radius: 10px;
+            border-width: 1px;
+            border-color: #2a3344;
+            vertical-stretch: 1;
+            VerticalBox {
+                padding: 12px;
+                spacing: 6px;
+                Text { text: "Recent jobs"; color: #e8e4d9; font-size: 16px; font-weight: 600; }
+                ScrollView {
+                    vertical-stretch: 1;
+                    min-height: 140px;
+                    VerticalBox {
+                        spacing: 4px;
+                        for j in root.jobs: Rectangle {
+                            background: #1c2330;
+                            border-radius: 6px;
+                            HorizontalBox {
+                                padding: 8px;
+                                spacing: 10px;
+                                Text {
+                                    text: j.id;
+                                    color: #d4a84b;
+                                    font-family: "monospace";
+                                    font-size: 11px;
+                                    vertical-alignment: center;
+                                }
+                                Text {
+                                    text: j.mode + " · " + j.status;
+                                    color: #e8e4d9;
+                                    font-size: 12px;
+                                    vertical-alignment: center;
+                                }
+                                Text {
+                                    text: j.summary;
+                                    color: #9aa3b5;
+                                    font-size: 11px;
+                                    horizontal-stretch: 1;
+                                    overflow: elide;
+                                    vertical-alignment: center;
+                                }
+                                Button {
+                                    text: "Open";
+                                    clicked => { root.open-job-clicked(j.id); }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}

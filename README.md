@@ -15,7 +15,8 @@ Plan: `~/Projects/plan_drafts/imaginarium-rs.md`
 | 4 | MCP stdio + proxy | **done** |
 | 5 | Vue 3 embedded UI | **done** |
 | 5.x | Studio+ craft (see docs/STUDIO_PLUS.md) | **5.1–5.4 done** |
-| 6 | Slint winit/kms app (GPL) | pending |
+| 6 | Slint winit app (GPL) | **6.0–6.1 done** · see docs/SLINT.md |
+| 6+ | ApexOS embed | handoff: docs/APEXOS_IMAGINARIUM.md |
 
 ## Quick start
 
@@ -40,9 +41,17 @@ export XAI_API_KEY=...
 export IMAGINARIUM_TOKEN=$(openssl rand -hex 24)   # or: imaginarium token create
 ./target/debug/imaginarium serve --bind 127.0.0.1:8791
 # open http://127.0.0.1:8791/  — paste token once (sessionStorage)
+
+# Native Slint UI (winit laptop) — GPL binary, separate crate
+cargo build -p imaginarium-slint
+export IMAGINARIUM_URL=http://127.0.0.1:8791
+export IMAGINARIUM_TOKEN=...   # same token as browser
+./target/debug/imaginarium-app
 ```
 
 Assets land in `~/.local/share/imaginarium/library/YYYY/MM/DD/<job_id>/`.
+
+ApexOS embed handoff: `docs/APEXOS_IMAGINARIUM.md` · Slint notes: `docs/SLINT.md`.
 
 ## Layout
 
