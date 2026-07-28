@@ -29,7 +29,11 @@ async function request(path, opts = {}) {
     data = { raw: text }
   }
   if (!res.ok) {
-    const msg = data?.error || data?.message || res.statusText || `HTTP ${res.status}`
+    let msg = data?.error || data?.message || res.statusText || `HTTP ${res.status}`
+    if (res.status === 413 || /payload too large/i.test(String(msg))) {
+      msg =
+        'Payload too large (server body limit). Rebuild/restart imaginarium serve if you just upgraded — craft PNG imports need >2MB.'
+    }
     const err = new Error(msg)
     err.status = res.status
     err.data = data

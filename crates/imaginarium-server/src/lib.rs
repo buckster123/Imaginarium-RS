@@ -9,6 +9,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use anyhow::{bail, Context, Result};
+use axum::extract::DefaultBodyLimit;
 use axum::Router;
 use imaginarium_core::client::ImagineClient;
 use imaginarium_core::config::Config;
@@ -20,6 +21,9 @@ use tower_http::trace::TraceLayer;
 use tracing::info;
 
 pub use routes::api_router;
+
+/// JSON bodies carry data-URLs for craft import / image edit — default axum 2MB is too small.
+const MAX_BODY: usize = 64 * 1024 * 1024;
 
 /// Shared server state.
 #[derive(Clone)]
@@ -78,6 +82,7 @@ pub async fn serve(cfg: Config, opts: ServeOptions) -> Result<()> {
         .merge(routes::public_router())
         .merge(api_router(state.clone(), opts.allow_localhost_no_auth))
         .merge(static_files::static_router())
+        .layer(DefaultBodyLimit::max(MAX_BODY))
         .layer(TraceLayer::new_for_http())
         .layer(cors);
 
