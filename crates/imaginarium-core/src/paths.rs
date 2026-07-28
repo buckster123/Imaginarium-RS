@@ -47,6 +47,11 @@ pub fn db_path(home: &Path) -> PathBuf {
     home.join("imaginarium.db")
 }
 
+pub fn tokens_db_path(home: &Path) -> PathBuf {
+    // Co-locate with main DB for simplicity; separate file also fine.
+    home.join("tokens.db")
+}
+
 pub fn library_root(home: &Path) -> PathBuf {
     home.join("library")
 }

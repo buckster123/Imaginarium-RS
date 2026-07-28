@@ -8,12 +8,17 @@ pub mod jobs;
 pub mod library;
 pub mod models;
 pub mod paths;
+pub mod tokens;
 pub mod types;
 
 pub use config::Config;
 pub use error::{Error, Result};
 pub use models::{
     catalog, default_video_model_for, validate_video_generate, ModelId, ModelInfo, VideoMode,
+};
+pub use tokens::{
+    extract_presented_token, is_loopback_bind, AuthIdentity, AuthSource, TokenMintResult,
+    TokenRecord, TokenScope, TokenStore,
 };
 pub use types::*;
 
@@ -32,9 +37,7 @@ pub fn mcp_stub_message(proxy: Option<&str>) -> String {
         Some(url) => format!(
             "Imaginarium MCP stub — planned thin proxy to {url} (Phase 4). See docs/AGENTS.md."
         ),
-        None => {
-            "Imaginarium MCP stub — stdio server planned in Phase 4. Core image client is ready."
-                .into()
-        }
+        None => "Imaginarium MCP stub — stdio server planned in Phase 4. Core image+video client is ready."
+            .into(),
     }
 }

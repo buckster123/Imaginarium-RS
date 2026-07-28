@@ -1,16 +1,18 @@
-//! SQLite job store (Phase 1 skeleton).
+//! SQLite job store.
 
 use std::path::Path;
+use std::sync::Mutex;
 
 use chrono::{DateTime, Utc};
 use rusqlite::{params, Connection};
 use tracing::debug;
 
-use crate::error::Result;
+use crate::error::{Error, Result};
 use crate::types::{JobId, JobMode, JobResult, JobStatus};
 
+/// Sync job store — Connection is !Sync, so we mutex it for axum Send futures.
 pub struct JobStore {
-    conn: Connection,
+    conn: Mutex<Connection>,
 }
 
 impl JobStore {
@@ -19,13 +21,16 @@ impl JobStore {
             std::fs::create_dir_all(parent)?;
         }
         let conn = Connection::open(path)?;
-        let store = Self { conn };
+        let store = Self {
+            conn: Mutex::new(conn),
+        };
         store.migrate()?;
         Ok(store)
     }
 
     fn migrate(&self) -> Result<()> {
-        self.conn.execute_batch(
+        let conn = self.conn.lock().map_err(|e| Error::Db(e.to_string()))?;
+        conn.execute_batch(
             r#"
             CREATE TABLE IF NOT EXISTS jobs (
                 job_id TEXT PRIMARY KEY,
@@ -47,7 +52,8 @@ impl JobStore {
 
     pub fn upsert_result(&self, result: &JobResult) -> Result<()> {
         let result_json = serde_json::to_string(result)?;
-        self.conn.execute(
+        let conn = self.conn.lock().map_err(|e| Error::Db(e.to_string()))?;
+        conn.execute(
             r#"
             INSERT INTO jobs (job_id, upstream_request_id, status, mode, model, prompt, result_json, created_at, completed_at, error)
             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
@@ -79,9 +85,8 @@ impl JobStore {
     }
 
     pub fn get(&self, job_id: &JobId) -> Result<Option<JobResult>> {
-        let mut stmt = self
-            .conn
-            .prepare("SELECT result_json FROM jobs WHERE job_id = ?1")?;
+        let conn = self.conn.lock().map_err(|e| Error::Db(e.to_string()))?;
+        let mut stmt = conn.prepare("SELECT result_json FROM jobs WHERE job_id = ?1")?;
         let mut rows = stmt.query(params![job_id.as_str()])?;
         if let Some(row) = rows.next()? {
             let json: String = row.get(0)?;
@@ -93,7 +98,8 @@ impl JobStore {
     }
 
     pub fn list_recent(&self, limit: usize) -> Result<Vec<JobListItem>> {
-        let mut stmt = self.conn.prepare(
+        let conn = self.conn.lock().map_err(|e| Error::Db(e.to_string()))?;
+        let mut stmt = conn.prepare(
             r#"
             SELECT job_id, status, mode, model, created_at, error
             FROM jobs

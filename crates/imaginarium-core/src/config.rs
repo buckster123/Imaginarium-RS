@@ -78,6 +78,9 @@ pub struct ServerConfig {
     pub bind: String,
     #[serde(default)]
     pub allow_localhost_no_auth: bool,
+    /// Env var for shared node/admin token (ApexOS AGENTD_TOKEN analogue).
+    #[serde(default = "default_node_token_env")]
+    pub node_token_env: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -131,6 +134,7 @@ impl Default for ServerConfig {
         Self {
             bind: default_bind(),
             allow_localhost_no_auth: false,
+            node_token_env: default_node_token_env(),
         }
     }
 }
@@ -186,6 +190,9 @@ fn default_poll_timeout_s() -> u64 {
 }
 fn default_bind() -> String {
     DEFAULT_BIND.into()
+}
+fn default_node_token_env() -> String {
+    "IMAGINARIUM_TOKEN".into()
 }
 fn default_image_model() -> String {
     "grok-imagine-image".into()
@@ -305,6 +312,19 @@ impl Config {
 
     pub fn db_path(&self) -> PathBuf {
         paths::db_path(&self.data_home)
+    }
+
+    pub fn tokens_db_path(&self) -> PathBuf {
+        paths::tokens_db_path(&self.data_home)
+    }
+
+    /// Shared node/admin token (env), ApexOS AGENTD_TOKEN style.
+    pub fn resolve_node_token(&self) -> Option<String> {
+        let env_name = &self.server.node_token_env;
+        std::env::var(env_name)
+            .ok()
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
     }
 }
 

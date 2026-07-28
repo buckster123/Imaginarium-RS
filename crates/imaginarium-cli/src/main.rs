@@ -65,6 +65,9 @@ enum Commands {
     /// Local job history
     #[command(subcommand)]
     Jobs(JobsCmd),
+    /// Mint / list / revoke LAN API tokens (ApexOS-compatible)
+    #[command(subcommand)]
+    Token(TokenCmd),
     /// Local library helpers
     #[command(subcommand)]
     Library(LibraryCmd),
@@ -74,10 +77,13 @@ enum Commands {
         #[arg(long)]
         proxy: Option<String>,
     },
-    /// Run HTTP API + UI (Phase 3 stub)
+    /// Run HTTP API (LAN token gate; non-loopback requires token)
     Serve {
         #[arg(long, default_value = DEFAULT_BIND)]
         bind: String,
+        /// Allow unauthenticated requests only when bind is loopback
+        #[arg(long)]
+        allow_localhost_no_auth: bool,
     },
 }
 
@@ -261,6 +267,27 @@ enum JobsCmd {
         #[arg(long)]
         json: bool,
     },
+}
+
+#[derive(Subcommand, Debug)]
+enum TokenCmd {
+    /// Create a token (prints plaintext once)
+    Create {
+        #[arg(long, default_value = "default")]
+        label: String,
+        /// admin | write | read
+        #[arg(long, default_value = "write")]
+        scope: String,
+        #[arg(long)]
+        json: bool,
+    },
+    /// List minted tokens (hashes never shown)
+    Ls {
+        #[arg(long)]
+        json: bool,
+    },
+    /// Revoke by id
+    Revoke { id: String },
 }
 
 #[derive(Subcommand, Debug)]
@@ -734,17 +761,73 @@ async fn main() -> Result<()> {
             let cfg = load_cfg(&cli)?;
             println!("{}", cfg.library_dir().display());
         }
+        Commands::Token(ref cmd) => {
+            let cfg = load_cfg(&cli)?;
+            let store = imaginarium_core::TokenStore::open(
+                &cfg.tokens_db_path(),
+                cfg.resolve_node_token(),
+            )?;
+            match cmd {
+                TokenCmd::Create { label, scope, json } => {
+                    let scope = imaginarium_core::TokenScope::parse(scope)?;
+                    let minted = store.mint(label, scope)?;
+                    if *json {
+                        println!("{}", serde_json::to_string_pretty(&minted)?);
+                    } else {
+                        println!("id={}", minted.id);
+                        println!("label={}", minted.label);
+                        println!("scope={}", minted.scope);
+                        println!("token={}  (store now — shown once)", minted.token);
+                        println!(
+                            "export IMAGINARIUM_TOKEN={}  # optional node-wide admin alias",
+                            minted.token
+                        );
+                    }
+                }
+                TokenCmd::Ls { json } => {
+                    let list = store.list()?;
+                    if *json {
+                        let pub_list: Vec<_> = list
+                            .iter()
+                            .map(|t| {
+                                serde_json::json!({
+                                    "id": t.id,
+                                    "label": t.label,
+                                    "scope": t.scope,
+                                    "created_at": t.created_at,
+                                })
+                            })
+                            .collect();
+                        println!("{}", serde_json::to_string_pretty(&pub_list)?);
+                    } else if list.is_empty() {
+                        println!("(no minted tokens — set IMAGINARIUM_TOKEN or create one)");
+                    } else {
+                        for t in list {
+                            println!("{}  {}  {}  {}", t.id, t.scope, t.label, t.created_at);
+                        }
+                    }
+                }
+                TokenCmd::Revoke { id } => {
+                    if store.revoke(id)? {
+                        println!("revoked {id}");
+                    } else {
+                        bail!("token not found: {id}");
+                    }
+                }
+            }
+        }
         Commands::Mcp { proxy } => {
             let msg = imaginarium_core::mcp_stub_message(proxy.as_deref());
             eprintln!("{msg}");
             bail!("MCP server not implemented yet (Phase 4)");
         }
-        Commands::Serve { bind } => {
-            eprintln!(
-                "serve stub — will bind {bind} in Phase 3 (API) / Phase 5 (Vue UI). default={}",
-                DEFAULT_BIND
-            );
-            bail!("HTTP server not implemented yet (Phase 3)");
+        Commands::Serve {
+            ref bind,
+            allow_localhost_no_auth,
+        } => {
+            let cfg = load_cfg(&cli)?;
+            imaginarium_server::serve_from_config(cfg, Some(bind.clone()), allow_localhost_no_auth)
+                .await?;
         }
     }
 
