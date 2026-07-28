@@ -817,9 +817,8 @@ async fn main() -> Result<()> {
             }
         }
         Commands::Mcp { proxy } => {
-            let msg = imaginarium_core::mcp_stub_message(proxy.as_deref());
-            eprintln!("{msg}");
-            bail!("MCP server not implemented yet (Phase 4)");
+            // Logs must stay on stderr; this takes over stdio for JSON-RPC.
+            imaginarium_mcp::run(proxy.clone()).await?;
         }
         Commands::Serve {
             ref bind,

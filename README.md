@@ -12,7 +12,7 @@ Plan: `~/Projects/plan_drafts/imaginarium-rs.md`
 | 1 | Image gen/edit + local library + job DB | **done** |
 | 2 | Video full surface | **done** |
 | 3 | LAN HTTP API + tokens | **done** |
-| 4 | MCP stdio + proxy | pending |
+| 4 | MCP stdio + proxy | **done** |
 | 5 | Vue 3 embedded UI | pending |
 | 6 | Slint winit/kms app (GPL) | pending |
 

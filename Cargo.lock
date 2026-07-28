@@ -804,6 +804,7 @@ dependencies = [
  "anyhow",
  "clap",
  "imaginarium-core",
+ "imaginarium-mcp",
  "imaginarium-server",
  "serde_json",
  "tokio",
@@ -842,10 +843,14 @@ name = "imaginarium-mcp"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "async-trait",
  "imaginarium-core",
+ "reqwest",
  "serde",
  "serde_json",
+ "tokio",
  "tracing",
+ "tracing-subscriber",
 ]
 
 [[package]]

@@ -16,6 +16,7 @@ path = "src/main.rs"
 [dependencies]
 imaginarium-core.workspace = true
 imaginarium-server.workspace = true
+imaginarium-mcp.workspace = true
 anyhow.workspace = true
 clap.workspace = true
 serde_json.workspace = true
