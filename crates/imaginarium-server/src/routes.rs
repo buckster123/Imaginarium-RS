@@ -205,7 +205,12 @@ async fn video_gen(State(state): State<AppState>, Json(body): Json<VideoGenBody>
         Ok(r) => r,
         Err(e) => return err_response(StatusCode::BAD_REQUEST, e),
     };
-    let image = match body.image.as_deref().map(MediaRef::from_remote_input).transpose() {
+    let image = match body
+        .image
+        .as_deref()
+        .map(MediaRef::from_remote_input)
+        .transpose()
+    {
         Ok(v) => v,
         Err(e) => return err_response(StatusCode::BAD_REQUEST, e),
     };

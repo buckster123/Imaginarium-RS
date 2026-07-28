@@ -259,7 +259,14 @@ impl ImagineClient {
         }
 
         let job = self
-            .finalize_image_job(job, &body_text, library, store, &req.prompt, cost.estimated_usd)
+            .finalize_image_job(
+                job,
+                &body_text,
+                library,
+                store,
+                &req.prompt,
+                cost.estimated_usd,
+            )
             .await?;
         info!(job_id = %job.job_id, n = job.assets.len(), "image generate done");
         Ok(job)
@@ -350,8 +357,15 @@ impl ImagineClient {
             return self.fail_job(job, store, status.as_u16(), body_text);
         }
 
-        self.finalize_image_job(job, &body_text, library, store, &req.prompt, cost.estimated_usd)
-            .await
+        self.finalize_image_job(
+            job,
+            &body_text,
+            library,
+            store,
+            &req.prompt,
+            cost.estimated_usd,
+        )
+        .await
     }
 
     // ── Video ──────────────────────────────────────────────────────────
