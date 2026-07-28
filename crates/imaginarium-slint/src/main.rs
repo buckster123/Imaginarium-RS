@@ -103,13 +103,7 @@ fn main() -> anyhow::Result<()> {
                 let outcome = async {
                     let client = NodeClient::new(&base, &token)?;
                     let job = client
-                        .image_generate(
-                            &prompt,
-                            Some(&model),
-                            n,
-                            Some(&aspect),
-                            Some(&resolution),
-                        )
+                        .image_generate(&prompt, Some(&model), n, Some(&aspect), Some(&resolution))
                         .await?;
                     let job_id = job
                         .get("job_id")

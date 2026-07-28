@@ -258,30 +258,16 @@ impl ImagineClient {
             return self.fail_job(job, store, status.as_u16(), body_text);
         }
 
-        let parsed: ImageApiResponse = serde_json::from_str(&body_text)?;
-        let job_dir = library.ensure_job_dir(&job.job_id)?;
-        library.write_prompt(&job_dir, &req.prompt)?;
-
-        let mut assets = Vec::new();
-        for (i, item) in parsed.data.iter().enumerate() {
-            assets.push(
-                self.materialize_image_asset(library, &job_dir, i, item)
-                    .await?,
-            );
-        }
-
-        job.ok = true;
-        job.status = JobStatus::Done;
-        job.assets = assets;
-        job.usage = Some(UsageInfo {
-            estimated_usd: Some(cost.estimated_usd),
-            upstream_ticks: parsed.usage.as_ref().and_then(|u| u.cost_in_usd_ticks),
-        });
-        job.completed_at = Some(Utc::now());
-        library.write_meta(&job_dir, &job)?;
-        if let Some(s) = store {
-            s.upsert_result(&job)?;
-        }
+        let job = self
+            .finalize_image_job(
+                job,
+                &body_text,
+                library,
+                store,
+                &req.prompt,
+                cost.estimated_usd,
+            )
+            .await?;
         info!(job_id = %job.job_id, n = job.assets.len(), "image generate done");
         Ok(job)
     }
@@ -371,31 +357,15 @@ impl ImagineClient {
             return self.fail_job(job, store, status.as_u16(), body_text);
         }
 
-        let parsed: ImageApiResponse = serde_json::from_str(&body_text)?;
-        let job_dir = library.ensure_job_dir(&job.job_id)?;
-        library.write_prompt(&job_dir, &req.prompt)?;
-
-        let mut assets = Vec::new();
-        for (i, item) in parsed.data.iter().enumerate() {
-            assets.push(
-                self.materialize_image_asset(library, &job_dir, i, item)
-                    .await?,
-            );
-        }
-
-        job.ok = true;
-        job.status = JobStatus::Done;
-        job.assets = assets;
-        job.usage = Some(UsageInfo {
-            estimated_usd: Some(cost.estimated_usd),
-            upstream_ticks: parsed.usage.as_ref().and_then(|u| u.cost_in_usd_ticks),
-        });
-        job.completed_at = Some(Utc::now());
-        library.write_meta(&job_dir, &job)?;
-        if let Some(s) = store {
-            s.upsert_result(&job)?;
-        }
-        Ok(job)
+        self.finalize_image_job(
+            job,
+            &body_text,
+            library,
+            store,
+            &req.prompt,
+            cost.estimated_usd,
+        )
+        .await
     }
 
     // ── Video ──────────────────────────────────────────────────────────
@@ -881,15 +851,21 @@ impl ImagineClient {
             }
 
             if std::time::Instant::now() >= deadline {
+                // The wait timed out, but the upstream job may still be running — do
+                // NOT mark it terminally Failed. That would seal off recovery for a
+                // job we already paid for (video_wait/video_status_once early-return
+                // on terminal states). Leave it non-terminal (Running) and report the
+                // timeout on the envelope so the caller re-polls.
                 let mut job = job;
                 job.ok = false;
-                job.status = JobStatus::Failed;
+                job.status = JobStatus::Running;
                 job.error = Some(format!(
-                    "poll timeout after {}s (last status: {last_status})",
+                    "poll timeout after {}s (last upstream status: {last_status}); \
+                     job may still be running — re-poll with job_wait / job_status",
                     self.poll_timeout.as_secs()
                 ));
                 job.error_type = Some("timeout".into());
-                job.completed_at = Some(Utc::now());
+                job.completed_at = None;
                 if let Some(s) = store {
                     s.upsert_result(&job)?;
                 }
@@ -925,6 +901,25 @@ impl ImagineClient {
             .get("duration")
             .and_then(|v| v.as_f64().or_else(|| v.as_u64().map(|u| u as f64)));
 
+        // A 2xx "done" carrying no url / file_output is not a usable result — don't
+        // record an empty ok=true job. Surface it as a parse failure with a snippet.
+        if temporary_url.is_none() && public_url.is_none() && file_id.is_none() {
+            let snippet = body.to_string().chars().take(400).collect::<String>();
+            job.ok = false;
+            job.status = JobStatus::Failed;
+            job.error = Some(format!(
+                "upstream reported done but returned no video asset: {snippet}"
+            ));
+            job.error_type = Some("parse".into());
+            job.completed_at = Some(Utc::now());
+            if let Some(s) = store {
+                s.upsert_result(&job)?;
+            }
+            return Err(Error::other(
+                "upstream reported done but returned no video asset",
+            ));
+        }
+
         let job_dir = library.ensure_job_dir(&job.job_id)?;
         if let Some(p) = &job.prompt {
             library.write_prompt(&job_dir, p)?;
@@ -937,7 +932,10 @@ impl ImagineClient {
                 let dest = job_dir.join("00.mp4");
                 match library::download_url(&self.http, url, &dest).await {
                     Ok(_) => local_path = Some(dest.display().to_string()),
-                    Err(e) => debug!("video download failed: {e}"),
+                    Err(e) => tracing::warn!(
+                        job_id = %job.job_id,
+                        "video download failed; asset kept as upstream url only: {e}"
+                    ),
                 }
             }
         }
@@ -969,11 +967,74 @@ impl ImagineClient {
             upstream_ticks: None,
         });
         job.completed_at = Some(Utc::now());
-        library.write_meta(&job_dir, &job)?;
+        if let Err(e) = library.write_meta(&job_dir, &job) {
+            tracing::warn!(job_id = %job.job_id, "write_meta failed (non-fatal): {e}");
+        }
         if let Some(s) = store {
             s.upsert_result(&job)?;
         }
         info!(job_id = %job.job_id, "video job done");
+        Ok(job)
+    }
+
+    /// Finalize an image job after a 2xx upstream response.
+    ///
+    /// Runs the fallible post-response steps (parse, dir, prompt, per-asset
+    /// download) in a guarded block: on ANY error the job is marked Failed rather
+    /// than left stranded in `running` (the pre-response state). A `done` response
+    /// carrying no image data is treated as a parse failure, not a silent empty
+    /// success. `write_meta` is best-effort (auxiliary metadata never fails a job
+    /// whose assets already materialized).
+    async fn finalize_image_job(
+        &self,
+        mut job: JobResult,
+        body_text: &str,
+        library: &Library,
+        store: Option<&JobStore>,
+        prompt: &str,
+        estimated_usd: f64,
+    ) -> Result<JobResult> {
+        let jid = job.job_id.clone();
+        let built = async {
+            let parsed: ImageApiResponse = serde_json::from_str(body_text)?;
+            if parsed.data.is_empty() {
+                return Err(Error::other(
+                    "upstream reported success but returned no image data",
+                ));
+            }
+            let job_dir = library.ensure_job_dir(&jid)?;
+            library.write_prompt(&job_dir, prompt)?;
+            let mut assets = Vec::new();
+            for (i, item) in parsed.data.iter().enumerate() {
+                assets.push(
+                    self.materialize_image_asset(library, &job_dir, i, item)
+                        .await?,
+                );
+            }
+            let ticks = parsed.usage.as_ref().and_then(|u| u.cost_in_usd_ticks);
+            Ok::<_, Error>((job_dir, assets, ticks))
+        }
+        .await;
+
+        let (job_dir, assets, ticks) = match built {
+            Ok(v) => v,
+            Err(e) => return self.fail_job_err(job, store, e),
+        };
+
+        job.ok = true;
+        job.status = JobStatus::Done;
+        job.assets = assets;
+        job.usage = Some(UsageInfo {
+            estimated_usd: Some(estimated_usd),
+            upstream_ticks: ticks,
+        });
+        job.completed_at = Some(Utc::now());
+        if let Err(e) = library.write_meta(&job_dir, &job) {
+            tracing::warn!(job_id = %job.job_id, "write_meta failed (non-fatal): {e}");
+        }
+        if let Some(s) = store {
+            s.upsert_result(&job)?;
+        }
         Ok(job)
     }
 

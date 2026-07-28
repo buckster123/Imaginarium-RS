@@ -315,9 +315,12 @@ fn init_tracing(level: &str) {
     let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| {
         EnvFilter::new(format!("imaginarium={level},imaginarium_core={level}"))
     });
+    // Log to stderr: the `mcp` subcommand owns stdout for the JSON-RPC stream, and
+    // any log line on stdout corrupts it. stderr is correct for every subcommand.
     let _ = tracing_subscriber::fmt()
         .with_env_filter(filter)
         .with_target(false)
+        .with_writer(std::io::stderr)
         .try_init();
 }
 

@@ -66,6 +66,10 @@ impl JobStore {
                 result_json = excluded.result_json,
                 completed_at = excluded.completed_at,
                 error = excluded.error
+            WHERE NOT (
+                jobs.status IN ('done', 'failed', 'expired', 'cancelled')
+                AND excluded.status NOT IN ('done', 'failed', 'expired', 'cancelled')
+            )
             "#,
             params![
                 result.job_id.as_str(),
@@ -158,4 +162,42 @@ pub fn parse_rfc3339(s: &str) -> Option<DateTime<Utc>> {
     DateTime::parse_from_rfc3339(s)
         .ok()
         .map(|dt| dt.with_timezone(&Utc))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::tempdir;
+
+    fn job(id: &JobId, status: JobStatus) -> JobResult {
+        let mut j = pending_job(JobMode::VideoGenerate, "grok-imagine-video", None);
+        j.job_id = id.clone();
+        j.status = status;
+        j
+    }
+
+    #[test]
+    fn terminal_job_not_clobbered_by_stale_running() {
+        let dir = tempdir().unwrap();
+        let store = JobStore::open(&dir.path().join("j.db")).unwrap();
+        let id = JobId::new();
+        store.upsert_result(&job(&id, JobStatus::Done)).unwrap();
+        // a stale in-flight write for the same job lands late
+        store.upsert_result(&job(&id, JobStatus::Running)).unwrap();
+        assert_eq!(
+            store.get(&id).unwrap().unwrap().status,
+            JobStatus::Done,
+            "a completed job must not be reset to running"
+        );
+    }
+
+    #[test]
+    fn running_still_advances_to_done() {
+        let dir = tempdir().unwrap();
+        let store = JobStore::open(&dir.path().join("j.db")).unwrap();
+        let id = JobId::new();
+        store.upsert_result(&job(&id, JobStatus::Running)).unwrap();
+        store.upsert_result(&job(&id, JobStatus::Done)).unwrap();
+        assert_eq!(store.get(&id).unwrap().unwrap().status, JobStatus::Done);
+    }
 }

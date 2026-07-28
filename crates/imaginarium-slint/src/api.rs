@@ -150,7 +150,11 @@ impl NodeClient {
     }
 
     /// Download library content to a cache path; returns path.
-    pub async fn download_job_content(&self, job_id: &str, dest_dir: &std::path::Path) -> Result<PathBuf> {
+    pub async fn download_job_content(
+        &self,
+        job_id: &str,
+        dest_dir: &std::path::Path,
+    ) -> Result<PathBuf> {
         std::fs::create_dir_all(dest_dir)?;
         let mut url = format!("{}/v1/library/{}/content", self.base, job_id);
         // also support query token for dumb openers
