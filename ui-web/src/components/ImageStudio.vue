@@ -9,7 +9,12 @@
 
       <div class="field">
         <label>Prompt</label>
-        <textarea v-model="prompt" placeholder="Marble amphitheater at golden hour…" />
+        <textarea
+          ref="promptEl"
+          v-model="prompt"
+          placeholder="Marble amphitheater at golden hour…  (Ctrl+Enter to run)"
+          @keydown="onPromptKey"
+        />
       </div>
 
       <div class="row">
@@ -59,12 +64,16 @@
         >
           Drop images or click to choose
           <div v-if="files.length" class="mono">{{ files.map((f) => f.name).join(', ') }}</div>
+          <div v-if="chainNote" class="ok">{{ chainNote }}</div>
         </div>
         <input ref="file" type="file" accept="image/*" multiple hidden @change="onPick" />
       </div>
 
-      <p v-if="estimate" class="muted">Est. ≈ ${{ estimate.estimated_usd?.toFixed?.(4) ?? estimate.estimated_usd }} · {{ estimate.note }}</p>
+      <p v-if="estimate" class="muted">
+        Est. ≈ ${{ Number(estimate.estimated_usd).toFixed(4) }} · {{ estimate.note }}
+      </p>
       <p v-if="error" class="err">{{ error }}</p>
+      <p v-if="busy" class="muted run-line">{{ busyMsg }}</p>
 
       <div class="row">
         <button class="btn" :disabled="busy" @click="refreshEstimate">Estimate</button>
@@ -75,7 +84,9 @@
     </section>
 
     <section class="card preview" v-if="result">
-      <h3>Result <span class="badge" :class="badgeClass(result.status)">{{ result.status }}</span></h3>
+      <h3>
+        Result <span class="badge" :class="badgeClass(result.status)">{{ result.status }}</span>
+      </h3>
       <p class="mono muted">job {{ result.job_id }}</p>
       <div class="thumbs">
         <template v-for="(a, i) in result.assets || []" :key="i">
@@ -83,16 +94,28 @@
           <a v-else class="mono" :href="assetSrc(a)" target="_blank">open</a>
         </template>
       </div>
-      <button class="btn" @click="$emit('done', result)">Open in Jobs</button>
+      <ChainBar
+        :result="result"
+        @chain="emitChain"
+        @to-jobs="emitJobs"
+      />
     </section>
   </div>
 </template>
 
 <script setup>
-import { ref, computed, watch } from 'vue'
+import { ref, computed, watch, onMounted } from 'vue'
 import { api, fileToDataUrl, getToken } from '../api'
+import { toastOk, toastErr } from '../toast'
+import ChainBar from './ChainBar.vue'
 
-const emit = defineEmits(['done'])
+const props = defineProps({
+  chainPayload: { type: Object, default: null },
+})
+const emit = defineEmits(['done', 'busy', 'chain-consumed'])
+
+const PREF = 'imaginarium_image_prefs'
+
 const mode = ref('gen')
 const prompt = ref('')
 const model = ref('quality')
@@ -100,19 +123,88 @@ const n = ref(1)
 const aspect = ref('16:9')
 const resolution = ref('')
 const files = ref([])
+const fileDataUrls = ref([]) // for chain-loaded remote images
+const chainNote = ref('')
 const drag = ref(false)
 const busy = ref(false)
+const busyMsg = ref('')
 const error = ref('')
 const result = ref(null)
 const estimate = ref(null)
+const promptEl = ref(null)
+const startedAt = ref(0)
+let tickTimer = null
 
 const canRun = computed(() => {
   if (!prompt.value.trim()) return false
-  if (mode.value === 'edit' && !files.value.length) return false
+  if (mode.value === 'edit' && !files.value.length && !fileDataUrls.value.length) return false
   return true
 })
 
-watch([model, n], () => refreshEstimate())
+watch([model, n, aspect, resolution], () => {
+  savePrefs()
+  refreshEstimate()
+})
+
+watch(
+  () => props.chainPayload,
+  async (p) => {
+    if (!p) return
+    if (p.action === 'image-edit') {
+      mode.value = 'edit'
+      await loadJobAsSource(p.result)
+      emit('chain-consumed')
+    }
+  }
+)
+
+function savePrefs() {
+  sessionStorage.setItem(
+    PREF,
+    JSON.stringify({
+      model: model.value,
+      n: n.value,
+      aspect: aspect.value,
+      resolution: resolution.value,
+    })
+  )
+}
+
+function loadPrefs() {
+  try {
+    const j = JSON.parse(sessionStorage.getItem(PREF) || '{}')
+    if (j.model) model.value = j.model
+    if (j.n) n.value = j.n
+    if (j.aspect != null) aspect.value = j.aspect
+    if (j.resolution != null) resolution.value = j.resolution
+  } catch {
+    /* ignore */
+  }
+}
+
+async function loadJobAsSource(job) {
+  chainNote.value = ''
+  fileDataUrls.value = []
+  files.value = []
+  try {
+    const t = getToken()
+    const url = api.libraryContentUrl(job.job_id) + (t ? `?token=${encodeURIComponent(t)}` : '')
+    const res = await fetch(url)
+    if (!res.ok) throw new Error(`load asset HTTP ${res.status}`)
+    const blob = await res.blob()
+    const dataUrl = await new Promise((resolve, reject) => {
+      const r = new FileReader()
+      r.onload = () => resolve(r.result)
+      r.onerror = reject
+      r.readAsDataURL(blob)
+    })
+    fileDataUrls.value = [dataUrl]
+    chainNote.value = `Loaded from job ${job.job_id.slice(0, 12)}…`
+    toastOk('Source image loaded for AI edit')
+  } catch (e) {
+    toastErr(e.message || String(e))
+  }
+}
 
 async function refreshEstimate() {
   try {
@@ -124,10 +216,14 @@ async function refreshEstimate() {
 
 function onPick(e) {
   files.value = [...(e.target.files || [])].slice(0, 3)
+  fileDataUrls.value = []
+  chainNote.value = ''
 }
 function onDrop(e) {
   drag.value = false
   files.value = [...(e.dataTransfer.files || [])].filter((f) => f.type.startsWith('image/')).slice(0, 3)
+  fileDataUrls.value = []
+  chainNote.value = ''
 }
 
 function isImage(a) {
@@ -135,7 +231,7 @@ function isImage(a) {
   return /\.(png|jpe?g|webp|gif)$/i.test(p) || a.kind === 'image'
 }
 function assetSrc(a) {
-  if (a.local_path && result.value?.job_id) {
+  if (result.value?.job_id) {
     return api.libraryContentUrl(result.value.job_id) + authQ()
   }
   return a.url || a.public_url || ''
@@ -150,9 +246,43 @@ function badgeClass(s) {
   return 'run'
 }
 
+function onPromptKey(e) {
+  if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
+    e.preventDefault()
+    run()
+  }
+}
+
+function setBusy(v, msg) {
+  busy.value = v
+  busyMsg.value = msg || ''
+  emit('busy', { busy: v, label: msg || 'image' })
+  if (v) {
+    startedAt.value = Date.now()
+    clearInterval(tickTimer)
+    tickTimer = setInterval(() => {
+      const s = Math.round((Date.now() - startedAt.value) / 1000)
+      busyMsg.value = `Working… ${s}s`
+      emit('busy', { busy: true, label: `${s}s` })
+    }, 500)
+  } else {
+    clearInterval(tickTimer)
+    tickTimer = null
+  }
+}
+
+function emitChain(payload) {
+  window.dispatchEvent(new CustomEvent('imaginarium-chain', { detail: payload }))
+}
+function emitJobs(job) {
+  window.dispatchEvent(new CustomEvent('imaginarium-to-jobs', { detail: job }))
+  emit('done', job)
+}
+
 async function run() {
   error.value = ''
-  busy.value = true
+  if (!canRun.value) return
+  setBusy(true, 'Working…')
   result.value = null
   try {
     if (mode.value === 'gen') {
@@ -164,7 +294,7 @@ async function run() {
         resolution: resolution.value || undefined,
       })
     } else {
-      const images = []
+      const images = [...fileDataUrls.value]
       for (const f of files.value) images.push(await fileToDataUrl(f))
       result.value = await api.imageEdit({
         prompt: prompt.value,
@@ -175,26 +305,63 @@ async function run() {
         resolution: resolution.value || undefined,
       })
     }
+    toastOk(`Image ${result.value.status || 'done'}`)
+    emit('done', result.value)
   } catch (e) {
     error.value = e.message || String(e)
+    toastErr(error.value)
   } finally {
-    busy.value = false
+    setBusy(false)
   }
 }
 
-refreshEstimate()
+onMounted(() => {
+  loadPrefs()
+  refreshEstimate()
+})
 </script>
 
 <style scoped>
-.grid { display: grid; gap: 1rem; grid-template-columns: 1.2fr 1fr; }
-@media (max-width: 900px) { .grid { grid-template-columns: 1fr; } }
-h2, h3 { margin: 0 0 0.75rem; }
-.mode-row { display: flex; gap: 0.35rem; margin-bottom: 1rem; }
-.tab {
-  background: transparent; border: 1px solid var(--border); color: var(--muted);
-  border-radius: 999px; padding: 0.35rem 0.85rem; cursor: pointer;
+.grid {
+  display: grid;
+  gap: 1rem;
+  grid-template-columns: 1.2fr 1fr;
 }
-.tab.active { color: var(--gold); border-color: var(--gold-dim); }
-.thumbs { display: grid; gap: 0.5rem; margin: 0.75rem 0; }
-.preview { align-self: start; }
+@media (max-width: 900px) {
+  .grid {
+    grid-template-columns: 1fr;
+  }
+}
+h2,
+h3 {
+  margin: 0 0 0.75rem;
+}
+.mode-row {
+  display: flex;
+  gap: 0.35rem;
+  margin-bottom: 1rem;
+}
+.tab {
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--muted);
+  border-radius: 999px;
+  padding: 0.35rem 0.85rem;
+  cursor: pointer;
+}
+.tab.active {
+  color: var(--gold);
+  border-color: var(--gold-dim);
+}
+.thumbs {
+  display: grid;
+  gap: 0.5rem;
+  margin: 0.75rem 0;
+}
+.preview {
+  align-self: start;
+}
+.run-line {
+  color: var(--warn);
+}
 </style>

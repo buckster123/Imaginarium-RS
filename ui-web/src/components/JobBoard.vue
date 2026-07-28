@@ -2,10 +2,20 @@
   <section class="card">
     <div class="head">
       <h2>Jobs</h2>
-      <button class="btn" :disabled="loading" @click="load">Refresh</button>
+      <div class="head-acts">
+        <label class="auto muted">
+          <input type="checkbox" v-model="autoRefresh" /> auto
+        </label>
+        <button class="btn" :disabled="loading" @click="load">Refresh</button>
+      </div>
     </div>
-    <p v-if="flash" class="ok muted">Latest: <span class="mono">{{ flash.job_id }}</span></p>
+    <p v-if="flash" class="ok muted">
+      Latest: <span class="mono">{{ flash.job_id }}</span>
+    </p>
     <p v-if="error" class="err">{{ error }}</p>
+    <p v-if="!items.length && !loading" class="muted empty">
+      No jobs yet — generate something in Image or Video.
+    </p>
     <table v-if="items.length">
       <thead>
         <tr>
@@ -20,7 +30,9 @@
       <tbody>
         <tr v-for="j in items" :key="j.job_id">
           <td class="mono">{{ short(j.job_id) }}</td>
-          <td><span class="badge" :class="badgeClass(j.status)">{{ j.status }}</span></td>
+          <td>
+            <span class="badge" :class="badgeClass(j.status)">{{ j.status }}</span>
+          </td>
           <td>{{ j.mode }}</td>
           <td class="mono">{{ j.model }}</td>
           <td class="muted">{{ j.created_at }}</td>
@@ -38,22 +50,31 @@
         </tr>
       </tbody>
     </table>
-    <p v-else class="muted">No jobs yet — generate something.</p>
 
     <div v-if="detail" class="detail card">
-      <h3>Detail <span class="mono">{{ detail.job_id }}</span></h3>
+      <h3>
+        Detail <span class="mono">{{ detail.job_id }}</span>
+      </h3>
       <pre class="mono">{{ pretty(detail) }}</pre>
       <div v-if="mediaUrl" class="media">
         <video v-if="isVideo" class="thumb" controls :src="mediaUrl" />
         <img v-else class="thumb" :src="mediaUrl" alt="asset" />
       </div>
+      <ChainBar
+        v-if="detail.job_id"
+        :result="detail"
+        @chain="(p) => windowDispatchChain(p)"
+        @to-jobs="() => {}"
+      />
     </div>
   </section>
 </template>
 
 <script setup>
-import { ref, watch, onMounted, computed } from 'vue'
+import { ref, watch, onMounted, onUnmounted, computed } from 'vue'
 import { api, getToken } from '../api'
+import { toastOk, toastErr } from '../toast'
+import ChainBar from './ChainBar.vue'
 
 const props = defineProps({ flash: Object })
 const emit = defineEmits(['select'])
@@ -63,6 +84,8 @@ const loading = ref(false)
 const error = ref('')
 const detail = ref(null)
 const waiting = ref('')
+const autoRefresh = ref(true)
+let timer = null
 
 const mediaUrl = computed(() => {
   if (!detail.value?.job_id) return ''
@@ -72,7 +95,7 @@ const mediaUrl = computed(() => {
 const isVideo = computed(() => {
   const a = detail.value?.assets?.[0]
   const p = a?.local_path || a?.url || ''
-  return /\.mp4|\.webm/i.test(p) || a?.kind === 'video'
+  return /\.mp4|\.webm/i.test(p) || a?.kind === 'video' || String(detail.value?.mode || '').includes('video')
 })
 
 watch(
@@ -84,6 +107,13 @@ watch(
     }
   }
 )
+
+watch(autoRefresh, (v) => {
+  clearInterval(timer)
+  if (v) timer = setInterval(() => {
+    if (items.value.some((j) => isPending(j.status))) load({ quiet: true })
+  }, 4000)
+})
 
 function short(id) {
   return id?.length > 12 ? id.slice(0, 10) + '…' : id
@@ -102,14 +132,21 @@ function isPending(s) {
   )
 }
 
-async function load() {
-  loading.value = true
+function windowDispatchChain(p) {
+  window.dispatchEvent(new CustomEvent('imaginarium-chain', { detail: p }))
+}
+
+async function load(opts = {}) {
+  if (!opts.quiet) loading.value = true
   error.value = ''
   try {
     const data = await api.jobs(40)
     items.value = Array.isArray(data) ? data : data.jobs || []
   } catch (e) {
-    error.value = e.message
+    if (!opts.quiet) {
+      error.value = e.message
+      toastErr(e.message)
+    }
   } finally {
     loading.value = false
   }
@@ -121,6 +158,7 @@ async function open(j) {
     emit('select', detail.value)
   } catch (e) {
     error.value = e.message
+    toastErr(e.message)
   }
 }
 
@@ -129,25 +167,72 @@ async function wait(j) {
   error.value = ''
   try {
     detail.value = await api.jobWait(j.job_id)
+    toastOk(`Job ${detail.value.status}`)
     await load()
   } catch (e) {
     error.value = e.message
+    toastErr(e.message)
   } finally {
     waiting.value = ''
   }
 }
 
-onMounted(load)
+onMounted(() => {
+  load()
+  timer = setInterval(() => {
+    if (autoRefresh.value && items.value.some((j) => isPending(j.status))) load({ quiet: true })
+  }, 4000)
+})
+onUnmounted(() => clearInterval(timer))
 </script>
 
 <style scoped>
-.head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.75rem; }
-h2, h3 { margin: 0; }
-table { width: 100%; border-collapse: collapse; font-size: 0.9rem; }
-th, td { text-align: left; padding: 0.45rem 0.35rem; border-bottom: 1px solid var(--border); }
-th { color: var(--muted); font-weight: 500; font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.04em; }
-.acts { display: flex; gap: 0.25rem; }
-.detail { margin-top: 1rem; }
+.head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 0.75rem;
+}
+.head-acts {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+}
+.auto {
+  display: flex;
+  gap: 0.35rem;
+  align-items: center;
+  font-size: 0.85rem;
+}
+h2,
+h3 {
+  margin: 0;
+}
+table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.9rem;
+}
+th,
+td {
+  text-align: left;
+  padding: 0.45rem 0.35rem;
+  border-bottom: 1px solid var(--border);
+}
+th {
+  color: var(--muted);
+  font-weight: 500;
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.acts {
+  display: flex;
+  gap: 0.25rem;
+}
+.detail {
+  margin-top: 1rem;
+}
 pre {
   max-height: 240px;
   overflow: auto;
@@ -156,5 +241,10 @@ pre {
   border-radius: 8px;
   font-size: 0.78rem;
 }
-.media { margin-top: 0.75rem; }
+.media {
+  margin-top: 0.75rem;
+}
+.empty {
+  padding: 1rem 0;
+}
 </style>
