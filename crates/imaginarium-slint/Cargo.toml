@@ -1,0 +1,17 @@
+[package]
+name = "imaginarium-slint"
+version = "0.1.0"
+edition = "2021"
+# Native app is GPL-3.0; headless stack remains MIT OR Apache-2.0.
+license = "GPL-3.0-only"
+repository = "https://github.com/buckster123/Imaginarium-RS"
+authors = ["Andre <buckster123>"]
+description = "Native Slint UI for Imaginarium-RS (Phase 6) — winit + linuxkms"
+publish = false
+
+[dependencies]
+# Phase 6: slint, imaginarium-core (as HTTP client or in-process), tokio, etc.
+
+[[bin]]
+name = "imaginarium-app"
+path = "src/main.rs"

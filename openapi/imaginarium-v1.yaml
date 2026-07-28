@@ -1,0 +1,77 @@
+# Imaginarium local API (draft OpenAPI stub)
+
+openapi: 3.1.0
+info:
+  title: Imaginarium-RS Local API
+  version: 0.1.0
+  description: |
+    LAN-facing gateway for xAI Imagine. Auth: Bearer IMAGINARIUM_TOKEN
+    (required when bind is non-loopback). Upstream xAI key stays on the node by default.
+servers:
+  - url: http://127.0.0.1:8791
+paths:
+  /health:
+    get:
+      summary: Liveness
+      responses:
+        "200":
+          description: OK
+  /v1/models:
+    get:
+      summary: Model catalog + capability matrix
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Catalog JSON
+  /v1/images/generations:
+    post:
+      summary: Text-to-image
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: JobResult
+  /v1/images/edits:
+    post:
+      summary: Image edit (1-3 sources)
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: JobResult
+  /v1/videos/generations:
+    post:
+      summary: Video generate (T2V/I2V/R2V)
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: JobResult (may be pending)
+  /v1/jobs:
+    get:
+      summary: List recent jobs
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Job list
+  /v1/jobs/{job_id}:
+    get:
+      summary: Get job by local ULID
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: job_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: JobResult
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer

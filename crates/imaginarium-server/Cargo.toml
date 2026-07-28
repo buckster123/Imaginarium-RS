@@ -1,0 +1,17 @@
+[package]
+name = "imaginarium-server"
+version.workspace = true
+edition = "2021"
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+rust-version.workspace = true
+description = "HTTP API + embedded browser UI for Imaginarium-RS (Phase 3/5)"
+
+[dependencies]
+imaginarium-core.workspace = true
+anyhow.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tracing.workspace = true
+# axum / tower / rust-embed arrive in Phase 3

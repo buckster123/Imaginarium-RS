@@ -1,0 +1,23 @@
+[package]
+name = "imaginarium-cli"
+version.workspace = true
+edition = "2021"
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+rust-version.workspace = true
+description = "Imaginarium CLI — local-first xAI Imagine studio gateway"
+default-run = "imaginarium"
+
+[[bin]]
+name = "imaginarium"
+path = "src/main.rs"
+
+[dependencies]
+imaginarium-core.workspace = true
+anyhow.workspace = true
+clap.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true

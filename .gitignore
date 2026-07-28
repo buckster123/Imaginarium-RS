@@ -1,0 +1,10 @@
+/target
+**/*.rs.bk
+.idea/
+.vscode/
+*.swp
+.DS_Store
+ui-web/node_modules/
+ui-web/dist/
+.env
+.env.*

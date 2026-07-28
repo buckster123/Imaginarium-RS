@@ -1,0 +1,57 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/imaginarium-core",
+    "crates/imaginarium-cli",
+    "crates/imaginarium-mcp",
+    "crates/imaginarium-server",
+    # "crates/imaginarium-slint",  # Phase 6 — GPL app, enable when scaffolding native UI
+]
+default-members = [
+    "crates/imaginarium-core",
+    "crates/imaginarium-cli",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/buckster123/Imaginarium-RS"
+authors = ["Andre <buckster123>"]
+rust-version = "1.75"
+
+[workspace.dependencies]
+imaginarium-core = { path = "crates/imaginarium-core", version = "0.1.0" }
+imaginarium-mcp = { path = "crates/imaginarium-mcp", version = "0.1.0" }
+imaginarium-server = { path = "crates/imaginarium-server", version = "0.1.0" }
+
+anyhow = "1"
+thiserror = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+toml = "0.8"
+clap = { version = "4", features = ["derive", "env"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "fs", "time", "io-util", "sync"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "stream", "multipart"] }
+ulid = { version = "1", features = ["serde"] }
+chrono = { version = "0.4", features = ["serde"] }
+directories = "5"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+url = { version = "2", features = ["serde"] }
+base64 = "0.22"
+bytes = "1"
+futures-util = "0.3"
+async-trait = "0.1"
+sha2 = "0.10"
+hex = "0.4"
+rusqlite = { version = "0.32", features = ["bundled"] }
+axum = "0.8"
+tower = "0.5"
+tower-http = { version = "0.6", features = ["cors", "trace", "fs"] }
+rust-embed = "8"
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+strip = true
