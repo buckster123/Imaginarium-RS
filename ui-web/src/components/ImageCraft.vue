@@ -89,18 +89,36 @@
       </div>
 
       <div class="row">
-        <button class="btn btn-primary" :disabled="!hasImage || busy" @click="exportLibrary">
+        <button class="btn btn-primary" :disabled="!hasImage || busy" @click="exportLibrary()">
           {{ busy ? 'Saving…' : 'Export → library' }}
         </button>
         <button class="btn" :disabled="!hasImage || busy" @click="exportMask">Export mask</button>
       </div>
+      <div class="row loop-row">
+        <button class="btn btn-primary" :disabled="!hasImage || busy" @click="exportThen('i2v')">
+          Export → I2V
+        </button>
+        <button class="btn" :disabled="!hasImage || busy" @click="exportThen('image-edit')">
+          Export → AI edit
+        </button>
+        <button class="btn" :disabled="!hasImage || busy" @click="exportThen('image-edit-mask')">
+          Export+mask → AI
+        </button>
+      </div>
       <p v-if="error" class="err">{{ error }}</p>
       <p v-if="lastExportId" class="ok mono">Saved job {{ lastExportId }}</p>
+      <ChainBar
+        v-if="lastResult"
+        :result="lastResult"
+        @chain="emitChain"
+        @to-jobs="emitJobs"
+      />
     </aside>
 
     <section class="stage card">
       <div v-if="!hasImage" class="empty muted">
         Open a file, or chain <strong>→ Craft</strong> from an image result.
+        <br />Then: Export → I2V · Export → AI edit · mask as soft guide.
       </div>
       <canvas
         ref="canvas"
@@ -119,6 +137,7 @@
 import { ref, computed, watch, onMounted, onUnmounted, nextTick } from 'vue'
 import { api, getToken } from '../api'
 import { toastOk, toastErr } from '../toast'
+import ChainBar from './ChainBar.vue'
 
 const props = defineProps({
   chainPayload: { type: Object, default: null },
@@ -151,6 +170,7 @@ const exportQ = ref(0.92)
 const busy = ref(false)
 const error = ref('')
 const lastExportId = ref('')
+const lastResult = ref(null)
 const lastJobId = ref('')
 const sourceJobId = ref(null)
 const hasImage = ref(false)
@@ -693,14 +713,15 @@ function compositeExport(includeMaskFade = false) {
 }
 
 async function exportLibrary() {
-  if (!hasImage.value) return
+  if (!hasImage.value) return null
   busy.value = true
   error.value = ''
   emit('busy', { busy: true, label: 'export' })
   try {
     const out = compositeExport(false)
     const dataUrl = out.toDataURL(exportFmt.value, exportQ.value)
-    const ext = exportFmt.value === 'image/png' ? 'png' : exportFmt.value === 'image/webp' ? 'webp' : 'jpg'
+    const ext =
+      exportFmt.value === 'image/png' ? 'png' : exportFmt.value === 'image/webp' ? 'webp' : 'jpg'
     const result = await api.libraryImport({
       data: dataUrl,
       filename: `craft.${ext}`,
@@ -709,12 +730,14 @@ async function exportLibrary() {
     })
     lastExportId.value = result.job_id
     lastJobId.value = result.job_id
+    lastResult.value = result
     toastOk(`Exported ${result.job_id.slice(0, 12)}…`)
     emit('done', result)
-    window.dispatchEvent(new CustomEvent('imaginarium-to-jobs', { detail: result }))
+    return result
   } catch (e) {
     error.value = e.message
     toastErr(e.message)
+    return null
   } finally {
     busy.value = false
     emit('busy', { busy: false })
@@ -722,7 +745,7 @@ async function exportLibrary() {
 }
 
 async function exportMask() {
-  if (!hasImage.value) return
+  if (!hasImage.value) return null
   busy.value = true
   try {
     const dataUrl = maskCanvas.toDataURL('image/png')
@@ -734,11 +757,47 @@ async function exportMask() {
     })
     toastOk(`Mask saved ${result.job_id.slice(0, 12)}…`)
     emit('done', result)
+    return result
   } catch (e) {
     toastErr(e.message)
+    return null
   } finally {
     busy.value = false
   }
+}
+
+/** 5.4 one-click: export then hand off to AI / I2V */
+async function exportThen(action) {
+  const exported = await exportLibrary()
+  if (!exported) return
+  if (action === 'image-edit-mask') {
+    const mask = await exportMask()
+    window.dispatchEvent(
+      new CustomEvent('imaginarium-chain', {
+        detail: {
+          action: 'image-edit',
+          result: exported,
+          maskResult: mask || undefined,
+          hint: 'Use the mask as a soft guide — paint black = areas to change.',
+        },
+      })
+    )
+    toastOk('Craft + mask → AI edit')
+    return
+  }
+  window.dispatchEvent(
+    new CustomEvent('imaginarium-chain', {
+      detail: { action, result: exported },
+    })
+  )
+}
+
+function emitChain(payload) {
+  window.dispatchEvent(new CustomEvent('imaginarium-chain', { detail: payload }))
+}
+function emitJobs(job) {
+  window.dispatchEvent(new CustomEvent('imaginarium-to-jobs', { detail: job }))
+  emit('done', job)
 }
 
 onMounted(() => {
@@ -824,6 +883,9 @@ defineExpose({ loadJob })
 .empty {
   padding: 2rem;
   text-align: center;
+}
+.loop-row {
+  margin-top: 0.45rem;
 }
 input[type='range'] {
   width: 100%;

@@ -99,12 +99,14 @@ Browser timeline UI; **encode on fat node via ffmpeg**.
 **Status (2026-07-28):** **shipped** — Craft → Video craft tab + chain `→ Video craft`.
 ### 5.4 — AI ↔ craft closed loop
 
-- Image craft mask → AI image edit (when API supports mask / as soft guide in prompt+ref)
-- Craft still → one-click I2V
-- Trimmed video end → Extend
-- Merged export → AI video edit
-- “Send to craft” from any result card
+- Image craft mask → AI image edit (soft guide: craft export + mask as 2nd ref)
+- Craft still → one-click **Export → I2V**
+- Craft still → **Export → AI edit** / **Export+mask → AI**
+- Video craft cut → **Render → Extend** / **Render → AI edit**
+- Chain bar on every result incl. craft_export (image/video detect by mime)
+- Loop hints on chain bar
 
+**Status (2026-07-28):** **shipped**
 ### 5.5+ (parked)
 
 - Multi-track  

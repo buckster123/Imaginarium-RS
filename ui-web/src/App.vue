@@ -159,7 +159,7 @@ function onBusy({ busy, label }) {
 function handleChain(payload) {
   const { action, result } = payload
   if (action === 'i2v' || action === 'extend' || action === 'video-edit') {
-    videoChain.value = { action, result }
+    videoChain.value = { action, result, ...payload }
     tab.value = 'video'
     toastOk(
       action === 'i2v'
@@ -169,9 +169,9 @@ function handleChain(payload) {
           : 'Loaded clip → AI edit'
     )
   } else if (action === 'image-edit') {
-    imageChain.value = { action, result }
+    imageChain.value = { action, result, maskResult: payload.maskResult, hint: payload.hint }
     tab.value = 'image'
-    toastOk('Loaded still → Image AI edit')
+    toastOk(payload.maskResult ? 'Craft + mask → Image AI edit' : 'Loaded still → Image AI edit')
   } else if (action === 'craft' || action === 'image-craft') {
     craftChain.value = { action, result }
     tab.value = 'craft'

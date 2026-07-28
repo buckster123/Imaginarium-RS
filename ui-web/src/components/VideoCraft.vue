@@ -62,10 +62,21 @@
       <div class="field"><label>Note</label><input v-model="note" placeholder="laundry rave cut" /></div>
 
       <p v-if="error" class="err">{{ error }}</p>
-      <button class="btn btn-primary" :disabled="!clips.length || busy" @click="render">
+      <button class="btn btn-primary" :disabled="!clips.length || busy" @click="render()">
         {{ busy ? busyMsg : 'Render → library' }}
       </button>
+      <div class="row loop-row">
+        <button class="btn btn-primary" :disabled="!clips.length || busy" @click="renderThen('extend')">
+          Render → Extend
+        </button>
+        <button class="btn" :disabled="!clips.length || busy" @click="renderThen('video-edit')">
+          Render → AI edit
+        </button>
+      </div>
       <p v-if="lastId" class="ok mono">Saved {{ lastId }}</p>
+      <p class="muted tip" style="margin-top: 0.5rem">
+        Loop: trim/fade → extend · AI edit the cut · craft still → I2V
+      </p>
     </aside>
 
     <section class="preview card">
@@ -89,7 +100,7 @@
 </template>
 
 <script setup>
-import { ref, computed, watch, onMounted } from 'vue'
+import { ref, computed, watch } from 'vue'
 import { api, getToken } from '../api'
 import { toastOk, toastErr } from '../toast'
 import ChainBar from './ChainBar.vue'
@@ -210,7 +221,7 @@ function emitJobs(job) {
 }
 
 async function render() {
-  if (!clips.value.length) return
+  if (!clips.value.length) return null
   error.value = ''
   busy.value = true
   busyMsg.value = 'ffmpeg rendering…'
@@ -251,9 +262,11 @@ async function render() {
     lastId.value = result.value.job_id
     toastOk(`Rendered ${short(result.value.job_id)}`)
     emit('done', result.value)
+    return result.value
   } catch (e) {
     error.value = e.message
     toastErr(e.message)
+    return null
   } finally {
     clearInterval(tick)
     busy.value = false
@@ -261,9 +274,24 @@ async function render() {
   }
 }
 
-onMounted(() => {
-  // optional
-})
+async function renderThen(action) {
+  const job = await render()
+  if (!job) return
+  window.dispatchEvent(
+    new CustomEvent('imaginarium-chain', {
+      detail: { action, result: job },
+    })
+  )
+  toastOk(action === 'extend' ? 'Cut → Extend' : 'Cut → AI video edit')
+}
+
+function emitChain(p) {
+  window.dispatchEvent(new CustomEvent('imaginarium-chain', { detail: p }))
+}
+function emitJobs(job) {
+  window.dispatchEvent(new CustomEvent('imaginarium-to-jobs', { detail: job }))
+  emit('done', job)
+}
 </script>
 
 <style scoped>
@@ -285,6 +313,7 @@ h2, h3 { margin: 0 0 0.5rem; }
 .clip { padding: 0.65rem; }
 .clip-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.35rem; }
 .vid { width: 100%; max-height: 420px; border-radius: 8px; background: #000; }
+.loop-row { margin-top: 0.45rem; }
 input[type='number'], input:not([type]) {
   width: 100%;
   background: var(--bg);

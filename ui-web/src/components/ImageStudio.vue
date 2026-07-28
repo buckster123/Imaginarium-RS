@@ -152,7 +152,7 @@ watch(
     if (!p) return
     if (p.action === 'image-edit') {
       mode.value = 'edit'
-      await loadJobAsSource(p.result)
+      await loadJobAsSource(p.result, p.maskResult, p.hint)
       emit('chain-consumed')
     }
   }
@@ -182,28 +182,43 @@ function loadPrefs() {
   }
 }
 
-async function loadJobAsSource(job) {
+async function loadJobAsSource(job, maskJob, hint) {
   chainNote.value = ''
   fileDataUrls.value = []
   files.value = []
   try {
-    const t = getToken()
-    const url = api.libraryContentUrl(job.job_id) + (t ? `?token=${encodeURIComponent(t)}` : '')
-    const res = await fetch(url)
-    if (!res.ok) throw new Error(`load asset HTTP ${res.status}`)
-    const blob = await res.blob()
-    const dataUrl = await new Promise((resolve, reject) => {
-      const r = new FileReader()
-      r.onload = () => resolve(r.result)
-      r.onerror = reject
-      r.readAsDataURL(blob)
-    })
-    fileDataUrls.value = [dataUrl]
-    chainNote.value = `Loaded from job ${job.job_id.slice(0, 12)}…`
-    toastOk('Source image loaded for AI edit')
+    const urls = []
+    urls.push(await jobToDataUrl(job.job_id))
+    if (maskJob?.job_id) {
+      urls.push(await jobToDataUrl(maskJob.job_id))
+    }
+    fileDataUrls.value = urls
+    const parts = [`Loaded from job ${job.job_id.slice(0, 12)}…`]
+    if (maskJob?.job_id) parts.push(`+ mask ${maskJob.job_id.slice(0, 10)}… as 2nd ref`)
+    if (hint) parts.push(hint)
+    chainNote.value = parts.join(' ')
+    if (!prompt.value.trim() && maskJob) {
+      prompt.value =
+        'Edit the main image; use the second (mask) image as a soft guide for which areas to change (darker = change more). Keep the laundry-rave vibe unless told otherwise.'
+    }
+    toastOk(maskJob ? 'Source + mask loaded for AI edit' : 'Source image loaded for AI edit')
   } catch (e) {
     toastErr(e.message || String(e))
   }
+}
+
+async function jobToDataUrl(jobId) {
+  const t = getToken()
+  const url = api.libraryContentUrl(jobId) + (t ? `?token=${encodeURIComponent(t)}` : '')
+  const res = await fetch(url)
+  if (!res.ok) throw new Error(`load asset HTTP ${res.status}`)
+  const blob = await res.blob()
+  return await new Promise((resolve, reject) => {
+    const r = new FileReader()
+    r.onload = () => resolve(r.result)
+    r.onerror = reject
+    r.readAsDataURL(blob)
+  })
 }
 
 async function refreshEstimate() {
