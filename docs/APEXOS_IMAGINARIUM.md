@@ -66,10 +66,23 @@ Auth model matches ApexOS agentd LAN tokens (Bearer / header / query). Prefer st
 | Video edit/extend | `POST /v1/videos/edits`, `.../extensions` |
 | Jobs | `GET /v1/jobs`, `GET /v1/jobs/{id}`, `POST /v1/jobs/{id}/wait` |
 | Library bytes | `GET /v1/library/{id}/content` |
-| Craft import | `POST /v1/library/import` (large body; server allows 64MB) |
+| Craft import | `POST /v1/library/import` (≤40 MB decoded; 64 MB body limit) |
 | Video craft render | `POST /v1/craft/video/render` (ffmpeg on node) |
 
-Body size: server `DefaultBodyLimit` **64MB** for craft data-URLs.
+Body size: server `DefaultBodyLimit` is **64 MB** (craft/edit data-URLs). `POST /v1/library/import` additionally caps the **decoded** payload at **40 MB** (413 above that) — so the effective import ceiling is 40 MB decoded, not 64.
+
+Full route/param/auth reference: **`openapi/imaginarium-v1.yaml`** (regenerated to match shipped code, 2026-07-28).
+
+### Contract notes (verified against code 2026-07-28)
+
+- **`model: "auto"`** — accepted on image/video/estimate (or omit `model`); selects the server default, and video auto-picks by modality (I2V→`video-1.5`, else `video`). Concrete model names still validate; unknown names 400.
+- **Tokens are not logged.** `?token=` is accepted for browser `<img>`/`<video>` sources; the request-log span records method + path only (never the query string).
+- **`POST /v1/jobs/{id}/wait`** returns the job as-is for already-terminal / synchronous (image) jobs, `404` for an unknown id, and `502` only on a genuine upstream error.
+- **Media fields** (`image`, `images[]`, `reference_images`, `video`) accept only `data:` / `http(s):` / `file_…` from the network surface — a bare local filesystem path is rejected (`400`). Local paths work only via the CLI.
+
+### Not in v1 — planned, do NOT build against yet
+
+These appear in `docs/ARCHITECTURE.md` but are **not implemented**: SSE job events (`GET /v1/jobs/{id}/events`), library listing / get / delete / upload (`GET`/`DELETE /v1/library`, `GET /v1/library/{id}`, `POST /v1/library/upload`), a standalone video poll route (`GET /v1/videos/{id}`), and per-token rate limits / spend caps. For v1 the ApexOS surface should **poll `GET /v1/jobs/{id}`** (or `POST …/wait`) rather than expect SSE, and treat library assets via `GET /v1/library/{id}/content`.
 
 ### Slint patterns (already in ApexOS)
 

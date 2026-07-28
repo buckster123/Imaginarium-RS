@@ -11,9 +11,9 @@ use imaginarium_core::client::{
 };
 use imaginarium_core::estimate;
 use imaginarium_core::jobs::JobStore;
-use imaginarium_core::models::ModelId;
+use imaginarium_core::models::{parse_model_selector, ModelId};
 use imaginarium_core::tokens::TokenScope;
-use imaginarium_core::types::{JobId, MediaRef};
+use imaginarium_core::types::{JobId, JobStatus, MediaRef};
 use serde::Deserialize;
 use serde_json::{json, Value};
 
@@ -69,12 +69,10 @@ struct EstimateBody {
 }
 
 async fn estimate_handler(Json(body): Json<EstimateBody>) -> Response {
-    let model = body.model.as_deref().unwrap_or(match body.kind.as_str() {
-        "video" => "video",
-        _ => "image",
-    });
-    let mid = match ModelId::parse(model) {
-        Ok(m) => m,
+    let mid = match parse_model_selector(body.model.as_deref()) {
+        Ok(Some(m)) => m,
+        Ok(None) if body.kind == "video" => ModelId::Video,
+        Ok(None) => ModelId::Image,
         Err(e) => return err_response(StatusCode::BAD_REQUEST, e),
     };
     let est = match body.kind.as_str() {
@@ -94,8 +92,8 @@ struct ImageGenBody {
 }
 
 async fn image_gen(State(state): State<AppState>, Json(body): Json<ImageGenBody>) -> Response {
-    let model = match ModelId::parse(body.model.as_deref().unwrap_or("image")) {
-        Ok(m) => m,
+    let model = match parse_model_selector(body.model.as_deref()) {
+        Ok(m) => m.unwrap_or(ModelId::Image),
         Err(e) => return err_response(StatusCode::BAD_REQUEST, e),
     };
     let jobs = match JobStore::open(&state.cfg.db_path()) {
@@ -134,8 +132,8 @@ struct ImageEditBody {
 }
 
 async fn image_edit(State(state): State<AppState>, Json(body): Json<ImageEditBody>) -> Response {
-    let model = match ModelId::parse(body.model.as_deref().unwrap_or("image")) {
-        Ok(m) => m,
+    let model = match parse_model_selector(body.model.as_deref()) {
+        Ok(m) => m.unwrap_or(ModelId::Image),
         Err(e) => return err_response(StatusCode::BAD_REQUEST, e),
     };
     let refs: Vec<MediaRef> = match body
@@ -187,14 +185,12 @@ struct VideoGenBody {
 }
 
 async fn video_gen(State(state): State<AppState>, Json(body): Json<VideoGenBody>) -> Response {
-    let explicit = body.model.is_some();
-    let model = match body.model.as_deref() {
-        Some(m) => match ModelId::parse(m) {
-            Ok(m) => Some(m),
-            Err(e) => return err_response(StatusCode::BAD_REQUEST, e),
-        },
-        None => None,
+    let model = match parse_model_selector(body.model.as_deref()) {
+        Ok(m) => m,
+        Err(e) => return err_response(StatusCode::BAD_REQUEST, e),
     };
+    // "auto" / absent -> None -> auto-select by modality (not user-forced).
+    let explicit = model.is_some();
     let refs = match body
         .reference_images
         .unwrap_or_default()
@@ -366,13 +362,36 @@ async fn jobs_wait(State(state): State<AppState>, Path(id): Path<String>) -> Res
         Ok(j) => j,
         Err(e) => return err_response(StatusCode::INTERNAL_SERVER_ERROR, e),
     };
+    let job_id = JobId(id.clone());
+    // Unknown id -> 404; an already-terminal job (e.g. a synchronous image job with
+    // no upstream video to poll) -> return it as-is rather than a 502.
+    match jobs.get(&job_id) {
+        Ok(None) => return err_response(StatusCode::NOT_FOUND, format!("job not found: {id}")),
+        Ok(Some(j))
+            if matches!(
+                j.status,
+                JobStatus::Done | JobStatus::Failed | JobStatus::Expired | JobStatus::Cancelled
+            ) =>
+        {
+            return Json(j).into_response();
+        }
+        Ok(Some(_)) => {}
+        Err(e) => return err_response(StatusCode::INTERNAL_SERVER_ERROR, e),
+    }
     match state
         .client
-        .video_wait(&JobId(id.clone()), &state.library, &jobs)
+        .video_wait(&job_id, &state.library, &jobs)
         .await
     {
         Ok(j) => Json(j).into_response(),
-        Err(e) => err_response(StatusCode::BAD_GATEWAY, e),
+        Err(e) => {
+            let status = if matches!(e, imaginarium_core::error::Error::JobNotFound(_)) {
+                StatusCode::NOT_FOUND
+            } else {
+                StatusCode::BAD_GATEWAY
+            };
+            err_response(status, e)
+        }
     }
 }
 

@@ -292,6 +292,19 @@ pub fn default_image_model() -> ModelId {
     ModelId::Image
 }
 
+/// Parse an optional model selector from an API / agent caller.
+///
+/// `None`, an empty string, and the literal `"auto"` all mean "let the server pick
+/// the default for this operation" and return `Ok(None)`. Any other value is parsed
+/// as a concrete model (error on unknown). This lets a caller pass `model: "auto"`
+/// (as `docs/APEXOS_IMAGINARIUM.md` and the SPA do) instead of getting a 400.
+pub fn parse_model_selector(s: Option<&str>) -> Result<Option<ModelId>> {
+    match s.map(str::trim) {
+        None | Some("") | Some("auto") => Ok(None),
+        Some(m) => ModelId::parse(m).map(Some),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -328,5 +341,17 @@ mod tests {
     fn model_aliases_parse() {
         assert_eq!(ModelId::parse("quality").unwrap(), ModelId::ImageQuality);
         assert_eq!(ModelId::parse("1.5").unwrap(), ModelId::Video15);
+    }
+
+    #[test]
+    fn auto_and_empty_select_no_model() {
+        assert_eq!(parse_model_selector(None).unwrap(), None);
+        assert_eq!(parse_model_selector(Some("auto")).unwrap(), None);
+        assert_eq!(parse_model_selector(Some("  ")).unwrap(), None);
+        assert_eq!(
+            parse_model_selector(Some("quality")).unwrap(),
+            Some(ModelId::ImageQuality)
+        );
+        assert!(parse_model_selector(Some("nope")).is_err());
     }
 }
