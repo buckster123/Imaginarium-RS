@@ -12,6 +12,9 @@ pub enum Error {
     #[error("invalid mode: {0}")]
     InvalidMode(String),
 
+    #[error("forbidden: {0}")]
+    Forbidden(String),
+
     #[error("missing credential: {0}")]
     MissingCredential(String),
 
@@ -47,6 +50,10 @@ impl Error {
 
     pub fn invalid_mode(msg: impl Into<String>) -> Self {
         Self::InvalidMode(msg.into())
+    }
+
+    pub fn forbidden(msg: impl Into<String>) -> Self {
+        Self::Forbidden(msg.into())
     }
 
     pub fn other(msg: impl Into<String>) -> Self {

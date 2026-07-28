@@ -24,7 +24,7 @@ pub fn public_router() -> Router {
     Router::new().route("/health", get(health))
 }
 
-pub fn api_router(state: AppState, _allow_localhost_no_auth: bool) -> Router {
+pub fn api_router(state: AppState) -> Router {
     Router::new()
         .route("/v1/models", get(models))
         .route("/v1/estimate", post(estimate_handler))
@@ -138,11 +138,15 @@ async fn image_edit(State(state): State<AppState>, Json(body): Json<ImageEditBod
         Ok(m) => m,
         Err(e) => return err_response(StatusCode::BAD_REQUEST, e),
     };
-    let refs: Vec<MediaRef> = body
+    let refs: Vec<MediaRef> = match body
         .images
         .iter()
-        .map(|s| MediaRef::from_user_input(s))
-        .collect();
+        .map(|s| MediaRef::from_remote_input(s))
+        .collect::<std::result::Result<Vec<_>, _>>()
+    {
+        Ok(r) => r,
+        Err(e) => return err_response(StatusCode::BAD_REQUEST, e),
+    };
     let jobs = match JobStore::open(&state.cfg.db_path()) {
         Ok(j) => j,
         Err(e) => return err_response(StatusCode::INTERNAL_SERVER_ERROR, e),
@@ -191,12 +195,20 @@ async fn video_gen(State(state): State<AppState>, Json(body): Json<VideoGenBody>
         },
         None => None,
     };
-    let refs = body
+    let refs = match body
         .reference_images
         .unwrap_or_default()
         .iter()
-        .map(|s| MediaRef::from_user_input(s))
-        .collect();
+        .map(|s| MediaRef::from_remote_input(s))
+        .collect::<std::result::Result<Vec<_>, _>>()
+    {
+        Ok(r) => r,
+        Err(e) => return err_response(StatusCode::BAD_REQUEST, e),
+    };
+    let image = match body.image.as_deref().map(MediaRef::from_remote_input).transpose() {
+        Ok(v) => v,
+        Err(e) => return err_response(StatusCode::BAD_REQUEST, e),
+    };
     let jobs = match JobStore::open(&state.cfg.db_path()) {
         Ok(j) => j,
         Err(e) => return err_response(StatusCode::INTERNAL_SERVER_ERROR, e),
@@ -208,7 +220,7 @@ async fn video_gen(State(state): State<AppState>, Json(body): Json<VideoGenBody>
                 prompt: body.prompt,
                 model,
                 explicit_model: explicit,
-                image: body.image.map(|s| MediaRef::from_user_input(&s)),
+                image,
                 reference_images: refs,
                 duration: body.duration,
                 aspect_ratio: body.aspect_ratio,
@@ -245,12 +257,16 @@ async fn video_edit(State(state): State<AppState>, Json(body): Json<VideoEditBod
         Ok(j) => j,
         Err(e) => return err_response(StatusCode::INTERNAL_SERVER_ERROR, e),
     };
+    let video = match MediaRef::from_remote_input(&body.video) {
+        Ok(v) => v,
+        Err(e) => return err_response(StatusCode::BAD_REQUEST, e),
+    };
     match state
         .client
         .video_edit(
             VideoEditRequest {
                 prompt: body.prompt,
-                video: MediaRef::from_user_input(&body.video),
+                video,
                 model,
             },
             &state.library,
@@ -288,12 +304,16 @@ async fn video_extend(
         Ok(j) => j,
         Err(e) => return err_response(StatusCode::INTERNAL_SERVER_ERROR, e),
     };
+    let video = match MediaRef::from_remote_input(&body.video) {
+        Ok(v) => v,
+        Err(e) => return err_response(StatusCode::BAD_REQUEST, e),
+    };
     match state
         .client
         .video_extend(
             VideoExtendRequest {
                 prompt: body.prompt,
-                video: MediaRef::from_user_input(&body.video),
+                video,
                 duration: body.duration,
                 model,
             },
@@ -352,7 +372,10 @@ async fn jobs_wait(State(state): State<AppState>, Path(id): Path<String>) -> Res
 }
 
 async fn library_content(State(state): State<AppState>, Path(id): Path<String>) -> Response {
-    // id may be job_id; stream first media file.
+    // id is a job/asset id; reject anything that could traverse the library root.
+    if !imaginarium_core::library::is_safe_asset_id(&id) {
+        return err_response(StatusCode::BAD_REQUEST, "invalid asset id");
+    }
     let root = state.cfg.library_dir();
     match job_content_path(&root, &id) {
         Some(path) => match tokio::fs::read(&path).await {

@@ -135,8 +135,10 @@ impl Backend for LocalBackend {
             .as_array()
             .ok_or_else(|| anyhow!("images required"))?
             .iter()
-            .filter_map(|v| v.as_str().map(MediaRef::from_user_input))
-            .collect::<Vec<_>>();
+            .filter_map(|v| v.as_str())
+            .map(MediaRef::from_remote_input)
+            .collect::<std::result::Result<Vec<_>, _>>()
+            .map_err(|e| anyhow!(e))?;
         let model = parse_model(args["model"].as_str(), "image")?;
         let jobs = self.jobs()?;
         let client = self.client()?;
@@ -166,14 +168,20 @@ impl Backend for LocalBackend {
             .map(ModelId::parse)
             .transpose()
             .map_err(|e| anyhow!(e))?;
-        let refs = args["reference_images"]
-            .as_array()
-            .map(|a| {
-                a.iter()
-                    .filter_map(|v| v.as_str().map(MediaRef::from_user_input))
-                    .collect()
-            })
-            .unwrap_or_default();
+        let refs = match args["reference_images"].as_array() {
+            Some(a) => a
+                .iter()
+                .filter_map(|v| v.as_str())
+                .map(MediaRef::from_remote_input)
+                .collect::<std::result::Result<Vec<_>, _>>()
+                .map_err(|e| anyhow!(e))?,
+            None => Vec::new(),
+        };
+        let image = args["image"]
+            .as_str()
+            .map(MediaRef::from_remote_input)
+            .transpose()
+            .map_err(|e| anyhow!(e))?;
         let no_wait = args["no_wait"].as_bool().unwrap_or(false);
         let jobs = self.jobs()?;
         let client = self.client()?;
@@ -183,7 +191,7 @@ impl Backend for LocalBackend {
                     prompt: args["prompt"].as_str().map(str::to_string),
                     model,
                     explicit_model: explicit,
-                    image: args["image"].as_str().map(MediaRef::from_user_input),
+                    image,
                     reference_images: refs,
                     duration: args["duration"].as_u64().map(|d| d as u32),
                     aspect_ratio: args["aspect_ratio"].as_str().map(str::to_string),
@@ -218,7 +226,7 @@ impl Backend for LocalBackend {
             .video_edit(
                 VideoEditRequest {
                     prompt,
-                    video: MediaRef::from_user_input(video),
+                    video: MediaRef::from_remote_input(video).map_err(|e| anyhow!(e))?,
                     model,
                 },
                 &self.library,
@@ -250,7 +258,7 @@ impl Backend for LocalBackend {
             .video_extend(
                 VideoExtendRequest {
                     prompt,
-                    video: MediaRef::from_user_input(video),
+                    video: MediaRef::from_remote_input(video).map_err(|e| anyhow!(e))?,
                     duration: args["duration"].as_u64().map(|d| d as u32),
                     model,
                 },

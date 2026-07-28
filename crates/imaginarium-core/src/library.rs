@@ -109,6 +109,18 @@ impl Library {
     }
 }
 
+/// True if `id` is a safe library path segment (a job/asset id): non-empty, bounded,
+/// and composed only of `[A-Za-z0-9_-]`. Used to guard every `…/{id}/…` filesystem
+/// join against path traversal (`..`, `/`, `\`, percent-encoded separators). ULIDs
+/// (Crockford base32) satisfy this.
+pub fn is_safe_asset_id(id: &str) -> bool {
+    !id.is_empty()
+        && id.len() <= 64
+        && id
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+}
+
 fn extension_from_name(name: &str) -> Option<String> {
     Path::new(name)
         .extension()
@@ -189,4 +201,21 @@ pub fn decode_data_url_or_b64(input: &str) -> Result<(Vec<u8>, String)> {
         .map_err(|e| Error::other(format!("base64: {e}")))?;
     let ext = sniff_ext(&bytes).unwrap_or("bin").to_string();
     Ok((bytes, ext))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn safe_asset_id_accepts_ids_rejects_traversal() {
+        assert!(is_safe_asset_id("01KYMRHFX5GSSMTWF5W9RTCT9D"));
+        assert!(is_safe_asset_id("craft-01_abc"));
+        assert!(!is_safe_asset_id(""));
+        assert!(!is_safe_asset_id("a/b"));
+        assert!(!is_safe_asset_id("../../etc/passwd"));
+        assert!(!is_safe_asset_id("..%2f..%2fetc"));
+        assert!(!is_safe_asset_id("a\\b"));
+        assert!(!is_safe_asset_id(&"x".repeat(65)));
+    }
 }

@@ -16,7 +16,6 @@ use imaginarium_core::config::Config;
 use imaginarium_core::library::Library;
 use imaginarium_core::tokens::{is_loopback_bind, TokenStore};
 use tokio::sync::Mutex;
-use tower_http::cors::{Any, CorsLayer};
 use tower_http::trace::TraceLayer;
 use tracing::info;
 
@@ -32,6 +31,11 @@ pub struct AppState {
     pub client: Arc<ImagineClient>,
     pub library: Arc<Library>,
     pub tokens: Arc<Mutex<TokenStore>>,
+    /// Explicit opt-in to allow tokenless Admin access for genuinely-loopback peers.
+    /// Set by the server constructor. The auth middleware additionally requires the
+    /// real peer IP (via `ConnectInfo`) to be loopback — never just the bind string —
+    /// so an embedder that mounts `api_router` without connect-info fails closed.
+    pub allow_localhost_no_auth: bool,
 }
 
 pub struct ServeOptions {
@@ -66,25 +70,34 @@ pub async fn serve(cfg: Config, opts: ServeOptions) -> Result<()> {
         ImagineClient::from_config(&cfg).context("upstream xAI credentials required for serve")?;
     let library = Library::new(cfg.library_dir());
 
+    let allow_localhost_no_auth = opts.allow_localhost_no_auth;
     let state = AppState {
         cfg: Arc::new(cfg),
         client: Arc::new(client),
         library: Arc::new(library),
         tokens: Arc::new(Mutex::new(tokens)),
+        allow_localhost_no_auth,
     };
 
-    let cors = CorsLayer::new()
-        .allow_origin(Any)
-        .allow_methods(Any)
-        .allow_headers(Any);
+    // No wildcard CORS on an authenticated API. The embedded SPA is served from the
+    // node's own origin (same-origin → no CORS needed); non-browser clients (CLI,
+    // Slint app, ApexOS) ignore CORS entirely. A cross-origin browser deployment
+    // should add an explicit `CorsLayer` origin allowlist here, never `allow_origin(Any)`.
+
+    // The request span records method + path only — never the query string, which
+    // can carry a `?token=` LAN token.
+    let trace = TraceLayer::new_for_http().make_span_with(
+        |req: &axum::http::Request<axum::body::Body>| {
+            tracing::info_span!("request", method = %req.method(), path = %req.uri().path())
+        },
+    );
 
     let app = Router::new()
         .merge(routes::public_router())
-        .merge(api_router(state.clone(), opts.allow_localhost_no_auth))
+        .merge(api_router(state.clone()))
         .merge(static_files::static_router())
         .layer(DefaultBodyLimit::max(MAX_BODY))
-        .layer(TraceLayer::new_for_http())
-        .layer(cors);
+        .layer(trace);
 
     let addr: SocketAddr = opts
         .bind
@@ -92,7 +105,13 @@ pub async fn serve(cfg: Config, opts: ServeOptions) -> Result<()> {
         .with_context(|| format!("invalid bind address: {}", opts.bind))?;
     info!(%addr, "imaginarium listening (API + UI)");
     let listener = tokio::net::TcpListener::bind(addr).await?;
-    axum::serve(listener, app).await?;
+    // Connect-info exposes the real peer address to the auth middleware so the
+    // localhost bypass can require a genuinely-loopback peer.
+    axum::serve(
+        listener,
+        app.into_make_service_with_connect_info::<SocketAddr>(),
+    )
+    .await?;
     Ok(())
 }
 
@@ -114,6 +133,10 @@ pub async fn serve_from_config(
 
 /// Resolve content file path for a job asset (best-effort first media file).
 pub fn job_content_path(library_root: &PathBuf, job_id: &str) -> Option<PathBuf> {
+    // Defense in depth: never join an unsafe id onto the filesystem (path traversal).
+    if !imaginarium_core::library::is_safe_asset_id(job_id) {
+        return None;
+    }
     let root = library_root;
     if !root.is_dir() {
         return None;

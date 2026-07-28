@@ -1,11 +1,13 @@
 //! Auth middleware — ApexOS agentd-compatible token gate.
 
-use axum::extract::{Request, State};
+use std::net::SocketAddr;
+
+use axum::extract::{ConnectInfo, Request, State};
 use axum::http::StatusCode;
 use axum::middleware::Next;
 use axum::response::{IntoResponse, Response};
 use imaginarium_core::tokens::{extract_presented_token, AuthIdentity, TokenScope};
-use imaginarium_core::{is_loopback_bind, PRODUCT, VERSION};
+use imaginarium_core::{PRODUCT, VERSION};
 
 use crate::AppState;
 
@@ -48,11 +50,18 @@ pub async fn require_auth(State(state): State<AppState>, mut req: Request, next:
         return (StatusCode::UNAUTHORIZED, "invalid or missing token").into_response();
     }
 
-    // Optional localhost bypass (explicit flag only).
-    if state.cfg.server.allow_localhost_no_auth {
-        // Cannot easily know peer IP in middleware without ConnectInfo; bypass is
-        // only safe when bind is loopback — enforce that here.
-        if is_loopback_bind(&state.cfg.server.bind) {
+    // Optional localhost bypass — explicit opt-in flag AND a genuinely-loopback peer.
+    // The decision is gated on the REAL peer address (via `ConnectInfo`), not the
+    // configured bind string, so it cannot be tricked by config and cannot fire for a
+    // remote client. If `ConnectInfo` is absent (e.g. an embedder mounted `api_router`
+    // without `into_make_service_with_connect_info`), the bypass fails closed.
+    if state.allow_localhost_no_auth {
+        let peer_is_loopback = req
+            .extensions()
+            .get::<ConnectInfo<SocketAddr>>()
+            .map(|ci| ci.0.ip().is_loopback())
+            .unwrap_or(false);
+        if peer_is_loopback {
             req.extensions_mut().insert(RequestAuth(AuthIdentity {
                 source: imaginarium_core::AuthSource::LocalhostBypass,
                 label: "localhost".into(),
