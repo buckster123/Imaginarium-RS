@@ -68,6 +68,8 @@
       </template>
 
       <div class="row transforms">
+        <button class="btn" :disabled="!canUndo" @click="undo" title="Ctrl+Z">Undo</button>
+        <button class="btn" :disabled="!canRedo" @click="redo" title="Ctrl+Shift+Z">Redo</button>
         <button class="btn" @click="rotate90">Rotate 90°</button>
         <button class="btn" @click="flipH">Flip H</button>
         <button class="btn" @click="flipV">Flip V</button>
@@ -114,7 +116,7 @@
 </template>
 
 <script setup>
-import { ref, computed, watch, onMounted, nextTick } from 'vue'
+import { ref, computed, watch, onMounted, onUnmounted, nextTick } from 'vue'
 import { api, getToken } from '../api'
 import { toastOk, toastErr } from '../toast'
 
@@ -153,6 +155,8 @@ const lastJobId = ref('')
 const sourceJobId = ref(null)
 const hasImage = ref(false)
 const cropRect = ref(null)
+const canUndo = ref(false)
+const canRedo = ref(false)
 
 // layers
 let baseCanvas = null // offscreen original+adjust
@@ -162,8 +166,106 @@ let imgNatural = { w: 0, h: 0 }
 let drawing = false
 let lastPt = null
 let cropStart = null
+let strokeDirty = false
+
+/** @type {Array<object>} */
+let history = []
+let historyIndex = -1
+const HISTORY_MAX = 40
+let suppressHistory = false
 
 const isDrawingTool = computed(() => ['paint', 'eraser', 'mask', 'crop'].includes(tool.value))
+
+function syncHistoryButtons() {
+  canUndo.value = historyIndex > 0
+  canRedo.value = historyIndex >= 0 && historyIndex < history.length - 1
+}
+
+function snapshotLayers() {
+  if (!baseCanvas || !paintCanvas || !maskCanvas) return null
+  return {
+    w: imgNatural.w,
+    h: imgNatural.h,
+    base: baseCanvas.toDataURL('image/png'),
+    paint: paintCanvas.toDataURL('image/png'),
+    mask: maskCanvas.toDataURL('image/png'),
+    exposure: exposure.value,
+    contrast: contrast.value,
+    saturation: saturation.value,
+  }
+}
+
+async function loadDataUrlOnto(canvasEl, dataUrl) {
+  const img = await loadImageBitmap(dataUrl)
+  const ctx = canvasEl.getContext('2d')
+  ctx.clearRect(0, 0, canvasEl.width, canvasEl.height)
+  ctx.drawImage(img, 0, 0)
+}
+
+async function restoreSnapshot(snap) {
+  if (!snap) return
+  suppressHistory = true
+  ensureLayers(snap.w, snap.h)
+  imgNatural = { w: snap.w, h: snap.h }
+  exposure.value = snap.exposure
+  contrast.value = snap.contrast
+  saturation.value = snap.saturation
+  await Promise.all([
+    loadDataUrlOnto(baseCanvas, snap.base),
+    loadDataUrlOnto(paintCanvas, snap.paint),
+    loadDataUrlOnto(maskCanvas, snap.mask),
+  ])
+  hasImage.value = true
+  cropRect.value = null
+  await nextTick()
+  fitCanvas()
+  render()
+  suppressHistory = false
+  syncHistoryButtons()
+}
+
+function pushHistory(label = '') {
+  if (suppressHistory || !hasImage.value || !baseCanvas) return
+  const snap = snapshotLayers()
+  if (!snap) return
+  // drop redo branch
+  if (historyIndex < history.length - 1) {
+    history = history.slice(0, historyIndex + 1)
+  }
+  history.push({ ...snap, label })
+  if (history.length > HISTORY_MAX) {
+    history.shift()
+  }
+  historyIndex = history.length - 1
+  syncHistoryButtons()
+}
+
+async function undo() {
+  if (historyIndex <= 0) return
+  historyIndex -= 1
+  await restoreSnapshot(history[historyIndex])
+  toastOk('Undo')
+}
+
+async function redo() {
+  if (historyIndex >= history.length - 1) return
+  historyIndex += 1
+  await restoreSnapshot(history[historyIndex])
+  toastOk('Redo')
+}
+
+function onKeyHistory(e) {
+  const mod = e.ctrlKey || e.metaKey
+  if (!mod || !hasImage.value) return
+  const key = e.key.toLowerCase()
+  if (key === 'z' && !e.shiftKey) {
+    e.preventDefault()
+    undo()
+  } else if ((key === 'z' && e.shiftKey) || key === 'y') {
+    e.preventDefault()
+    redo()
+  }
+}
 
 watch(
   () => props.chainPayload,
@@ -216,10 +318,15 @@ async function loadFromDataUrl(dataUrl, jobId) {
   hasImage.value = true
   sourceJobId.value = jobId || null
   lastJobId.value = jobId || lastJobId.value
-  resetAdjust()
+  exposure.value = 0
+  contrast.value = 0
+  saturation.value = 0
   await nextTick()
   fitCanvas()
   render()
+  history = []
+  historyIndex = -1
+  pushHistory('open')
 }
 
 async function onFile(e) {
@@ -398,6 +505,7 @@ function onDown(e) {
     ctx.fillText(textValue.value || ' ', p.x, p.y)
     drawing = false
     render()
+    pushHistory('text')
     return
   }
   if (tool.value === 'crop') {
@@ -406,14 +514,12 @@ function onDown(e) {
     return
   }
   if (tool.value === 'paint' || tool.value === 'eraser' || tool.value === 'mask') {
+    strokeDirty = true
     const ctx =
       tool.value === 'mask' ? maskCanvas.getContext('2d') : paintCanvas.getContext('2d')
     const col = tool.value === 'mask' ? '#000000' : brushColor.value
     const erase = tool.value === 'eraser' || (tool.value === 'mask' && e.shiftKey)
     brushStroke(ctx, p.x, p.y, p.x + 0.01, p.y + 0.01, col, erase || tool.value === 'eraser')
-    if (tool.value === 'mask' && !e.shiftKey) {
-      // mask paint black = exclude
-    }
     render()
   }
 }
@@ -443,12 +549,17 @@ function onMove(e) {
 }
 
 function onUp() {
+  if (strokeDirty) {
+    pushHistory('stroke')
+    strokeDirty = false
+  }
   drawing = false
   lastPt = null
   cropStart = null
 }
 
 function resetAdjust() {
+  if (exposure.value || contrast.value || saturation.value) pushHistory('adjust-before-reset')
   exposure.value = 0
   contrast.value = 0
   saturation.value = 0
@@ -475,6 +586,7 @@ function rotate90() {
   imgNatural = { w: h, h: w }
   fitCanvas()
   render()
+  pushHistory('rotate')
 }
 
 function flipH() {
@@ -501,6 +613,7 @@ function flip(sx, sy) {
   paintCanvas = doFlip(paintCanvas)
   maskCanvas = doFlip(maskCanvas)
   render()
+  pushHistory('flip')
 }
 
 function setAspectCrop(ratio) {
@@ -543,6 +656,7 @@ function applyCrop() {
   cropRect.value = null
   fitCanvas()
   render()
+  pushHistory('crop')
   toastOk('Crop applied')
 }
 
@@ -632,6 +746,19 @@ onMounted(() => {
     fitCanvas()
     render()
   })
+  window.addEventListener('keydown', onKeyHistory)
+})
+
+onUnmounted(() => {
+  window.removeEventListener('keydown', onKeyHistory)
+})
+
+// Debounced history for adjust sliders (one step after you stop dragging)
+let adjustTimer = null
+watch([exposure, contrast, saturation], () => {
+  if (suppressHistory || !hasImage.value) return
+  clearTimeout(adjustTimer)
+  adjustTimer = setTimeout(() => pushHistory('adjust'), 350)
 })
 
 defineExpose({ loadJob })
