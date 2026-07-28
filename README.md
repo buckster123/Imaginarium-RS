@@ -9,8 +9,8 @@ Plan: `~/Projects/plan_drafts/imaginarium-rs.md`
 | Phase | Scope | State |
 |---|---|---|
 | 0 | Workspace, config, models catalog | **done** |
-| 1 | Image gen/edit + local library + job DB | **in progress** (client wired) |
-| 2 | Video full surface | pending |
+| 1 | Image gen/edit + local library + job DB | **done** |
+| 2 | Video full surface | **done** |
 | 3 | LAN HTTP API + tokens | pending |
 | 4 | MCP stdio + proxy | pending |
 | 5 | Vue 3 embedded UI | pending |
@@ -21,15 +21,22 @@ Plan: `~/Projects/plan_drafts/imaginarium-rs.md`
 ```bash
 cd ~/Projects/Imaginarium-RS
 cargo build -p imaginarium-cli
-./target/debug/imaginarium version
-./target/debug/imaginarium models
-./target/debug/imaginarium config init
-./target/debug/imaginarium config show
-
 export XAI_API_KEY=...
-./target/debug/imaginarium estimate image --model quality --n 2
-./target/debug/imaginarium image gen -p "a marble amphitheater at golden hour" --model quality --ar 16:9 --json
+
+./target/debug/imaginarium models
+./target/debug/imaginarium image gen -p "marble amphitheater golden hour" --model quality --ar 16:9
+
+# Video (blocks until done by default; use --no-wait + status/wait)
+./target/debug/imaginarium video gen -p "camera orbit over a hillside amphitheater" --duration 8 --res 720p
+./target/debug/imaginarium video i2v --image ./still.png -p "slow pan out" --res 1080p
+./target/debug/imaginarium video ref -p "model walks the runway" --ref a.png --ref b.png
+./target/debug/imaginarium video edit --video ./clip.mp4 -p "add golden hour light"
+./target/debug/imaginarium video extend --video ./clip.mp4 --duration 6 -p "continue the pan"
+./target/debug/imaginarium video status <job_id>
+./target/debug/imaginarium video wait <job_id>
 ```
+
+Assets land in `~/.local/share/imaginarium/library/YYYY/MM/DD/<job_id>/`.
 
 ## Layout
 

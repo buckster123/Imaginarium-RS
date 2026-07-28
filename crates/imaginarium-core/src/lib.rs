@@ -12,7 +12,9 @@ pub mod types;
 
 pub use config::Config;
 pub use error::{Error, Result};
-pub use models::{catalog, ModelId, ModelInfo};
+pub use models::{
+    catalog, default_video_model_for, validate_video_generate, ModelId, ModelInfo, VideoMode,
+};
 pub use types::*;
 
 /// Crate / product version (workspace package version).
