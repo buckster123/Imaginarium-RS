@@ -101,6 +101,27 @@ pub fn all_tool_schemas() -> Vec<Value> {
             }),
         ),
         tool(
+            "imaginarium_craft_video",
+            "Cut finished library jobs into ONE edited video on the node (free, ffmpeg — no upstream spend). \
+             timeline = VideoTimeline v1: {version:1, clips:[segments], music?, style?, fades?}. Segment kinds: \
+             {job_id, in_s?, out_s?, speed? 0.5-2, gain_db?} = video clip · {kind:'still', job_id, dur_s, zoom_to? 1-3} \
+             = Ken-Burns image · {kind:'card', dur_s, card_color?} = title card. Every segment takes captions: \
+             [{text, start_s, end_s}] in SEGMENT-LOCAL seconds. music: {job_id, gain_db?, fade_in_s?, fade_out_s?} \
+             = an audio library job mixed under everything (import a track first, or use one already imported). \
+             style: {letterbox_frac? 0-0.45, letterbox_reveal_s?, loudnorm?, card_bg?, caption_color?}. \
+             Timeline-level video/audio_fade_in/out_s fade the whole piece. Default (wait=false) returns a \
+             pending job immediately — poll imaginarium_job_status until done, then the result is a normal \
+             library job (content/thumb routes, chainable). wait=true blocks until rendered.",
+            json!({
+                "type": "object",
+                "properties": {
+                    "timeline": { "type": "object", "description": "VideoTimeline v1 (see tool description)" },
+                    "wait": { "type": "boolean", "default": false }
+                },
+                "required": ["timeline"]
+            }),
+        ),
+        tool(
             "imaginarium_job_status",
             "One-shot status for a local job_id (polls upstream if pending).",
             json!({

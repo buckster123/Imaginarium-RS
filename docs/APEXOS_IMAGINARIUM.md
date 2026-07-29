@@ -99,6 +99,12 @@ visual library job carries a **480px JPEG poster**: `GET /v1/library/{id}/thumb`
 (eager on import, rebuilt lazily on demand — pre-U3 content included). The
 `thumb.jpg` sidecar is never addressable as a media asset.
 
+**Agent surface (MCP).** The proxy plugin's `imaginarium_craft_video` tool
+drives the same engine: `{timeline: <VideoTimeline v1>, wait?: false}` →
+pending job → `imaginarium_job_status` polls (craft jobs are DB-truth on every
+path). The tool description carries the compact grammar — agents need no other
+reference.
+
 Body size: server `DefaultBodyLimit` is **64 MB** (craft/edit data-URLs). `POST /v1/library/import` additionally caps the **decoded** payload at **40 MB** (413 above that) — so the effective import ceiling is 40 MB decoded, not 64.
 
 Full route/param/auth reference: **`openapi/imaginarium-v1.yaml`** (regenerated to match shipped code, 2026-07-28).
