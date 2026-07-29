@@ -117,7 +117,7 @@ upstream (this repo) slices, in order:
       segment-owned captions (makes the lost-overlay-after-clip-0 bug
       unrepresentable), ffprobe durations (kills the 6.0s fallback), `-nostdin`
       + even-dimension pitfalls as tests.
-- [ ] **U2b — craft engine expressiveness** (part 2): versioned merged timeline
+- [x] **U2b — craft engine expressiveness** (part 2): versioned merged timeline
       contract (style block, segment kinds clip/still+Ken-Burns/card, speed,
       letterbox recipes), two-pass loudnorm ship pass, content-hash segment
       caching, provenance field.

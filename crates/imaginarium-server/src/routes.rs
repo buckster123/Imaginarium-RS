@@ -470,6 +470,7 @@ async fn library_import(
         &filename,
         body.note.as_deref(),
         body.source_job_id.as_deref(),
+        None,
     ) {
         Ok(r) => Json(r).into_response(),
         Err(e) => err_response(StatusCode::INTERNAL_SERVER_ERROR, e),

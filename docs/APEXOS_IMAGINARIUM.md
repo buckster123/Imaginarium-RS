@@ -69,16 +69,25 @@ Auth model matches ApexOS agentd LAN tokens (Bearer / header / query). Prefer st
 | Craft import | `POST /v1/library/import` (≤40 MB decoded; 64 MB body limit; images, video, **audio** — music beds) |
 | Video craft render | `POST /v1/craft/video/render` (ffmpeg on node) |
 
-**Craft engine (U2a, 2026-07-29).** The render pipeline normalizes every clip
-onto one canvas (aspect-fit + pad, unified fps, `yuv420p`) before a stream-copy
-concat — mixed-resolution/fps sources cut cleanly — then mixes ALL audio in one
-master-clock pass (`amix normalize=0`): each clip's own audio at its timeline
-offset plus an optional **`music`** bed (`AudioTrack`: library job id +
-`in_s`/`start_s`/`gain_db`/fades — import a Sonus track, reference its job id).
-Timeline `overlays` are master-clock seconds and render on every segment they
-intersect; clip `captions` are segment-local. Durations are ffprobe-measured.
-Clips must be video (stills/Ken Burns arrive in a later slice). Full schema:
-the OpenAPI `VideoTimeline`.
+**Craft engine (U2a+U2b, 2026-07-29 — timeline contract `version: 1`).** The
+render pipeline normalizes every segment onto one canvas (aspect-fit + pad,
+unified fps, `yuv420p`) before a stream-copy concat — mixed-resolution/fps
+sources cut cleanly — then mixes ALL audio in one master-clock pass
+(`amix normalize=0`): each clip's own audio at its timeline offset
+(speed-matched via `atempo`) plus an optional **`music`** bed (`AudioTrack`:
+library job id + `in_s`/`start_s`/`gain_db`/fades — import a Sonus track,
+reference its job id). Segment kinds: **`clip`** (trim, `speed` 0.5–2.0),
+**`still`** (image + Ken-Burns `zoom_from`→`zoom_to`, needs `dur_s`),
+**`card`** (solid `card_color`, captions carry the text). The **`style`** block
+holds config-not-code aesthetics: caption fontsize/color defaults, `card_bg`,
+cinematic `letterbox_frac` bars with an animated `letterbox_reveal_s` open, and
+a `loudnorm` two-pass EBU R128 ship pass. Timeline `overlays` are master-clock
+seconds and render on every segment they intersect; segment `captions` are
+segment-local. Durations are ffprobe-measured. Segments are content-hash cached
+(`{data-home}/craft-segcache`, 2 GiB LRU) — tweak one card and only that card
+re-encodes. Craft jobs carry full provenance in `meta.json` (contract version,
+engine, ffmpeg version, the submitted timeline). Full schema: the OpenAPI
+`VideoTimeline`.
 
 Body size: server `DefaultBodyLimit` is **64 MB** (craft/edit data-URLs). `POST /v1/library/import` additionally caps the **decoded** payload at **40 MB** (413 above that) — so the effective import ceiling is 40 MB decoded, not 64.
 
