@@ -110,7 +110,7 @@ upstream (this repo) slices, in order:
       resolution, kills the download→base64 chain round-trip), `?i=` multi-asset
       addressing on `/v1/library/{id}/content` (n>1 batches fully reachable),
       jobs-list projection carrying `prompt` + `assets` count.
-- [ ] **U2a — craft engine correctness** (cutting-room port, part 1): per-segment
+- [x] **U2a — craft engine correctness** (cutting-room port, part 1): per-segment
       normalize filter → concat (fixes mixed-source `-c copy` breakage),
       master-clock single audio pass + a **music-bed audio track**
       (`AssetKind::Audio` + library audio sniff/mime/import/content-type),

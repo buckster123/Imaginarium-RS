@@ -57,10 +57,10 @@ impl Library {
     ) -> Result<JobResult> {
         let ext = extension_from_name(filename_hint)
             .unwrap_or_else(|| sniff_ext(bytes).unwrap_or("bin").to_string());
-        let kind = if matches!(ext.as_str(), "mp4" | "webm" | "mov") {
-            AssetKind::Video
-        } else {
-            AssetKind::Image
+        let kind = match ext.as_str() {
+            "mp4" | "webm" | "mov" | "mkv" => AssetKind::Video,
+            "mp3" | "wav" | "flac" | "ogg" | "m4a" | "opus" => AssetKind::Audio,
+            _ => AssetKind::Image,
         };
         let job_id = JobId::new();
         let dir = self.ensure_job_dir(&job_id)?;
@@ -140,8 +140,11 @@ pub fn parse_library_ref(s: &str) -> Option<(String, u32)> {
 
 /// Media extensions the library serves / resolves, preference-ordered
 /// (video first — matches the historic first-file behavior; mov/mkv cover
-/// craft imports).
-const MEDIA_EXTS: &[&str] = &["mp4", "webm", "mov", "mkv", "png", "jpg", "jpeg", "webp"];
+/// craft imports; audio last so mixed dirs keep resolving their visual asset).
+const MEDIA_EXTS: &[&str] = &[
+    "mp4", "webm", "mov", "mkv", "png", "jpg", "jpeg", "webp", "mp3", "wav", "flac", "ogg", "m4a",
+    "opus",
+];
 
 /// Resolve the `index`-th media asset of a job under the library root
 /// (`YYYY/MM/DD/{job_id}/`). Index 0 keeps the historic first-file behavior
@@ -255,8 +258,25 @@ fn sniff_ext(bytes: &[u8]) -> Option<&'static str> {
     if bytes.len() >= 12 && &bytes[0..4] == b"RIFF" && &bytes[8..12] == b"WEBP" {
         return Some("webp");
     }
+    if bytes.len() >= 12 && &bytes[0..4] == b"RIFF" && &bytes[8..12] == b"WAVE" {
+        return Some("wav");
+    }
     if bytes.starts_with(b"GIF8") {
         return Some("gif");
+    }
+    if bytes.starts_with(b"fLaC") {
+        return Some("flac");
+    }
+    if bytes.starts_with(b"OggS") {
+        return Some("ogg");
+    }
+    // mp3: ID3 tag or a bare MPEG frame sync (11 set bits); jpeg's 0xFFD8 is
+    // checked above and its second byte fails the 0xE0 mask, so no collision.
+    if bytes.starts_with(b"ID3") {
+        return Some("mp3");
+    }
+    if bytes.len() >= 2 && bytes[0] == 0xff && bytes[1] & 0xe0 == 0xe0 {
+        return Some("mp3");
     }
     if bytes.windows(4).any(|w| w == b"ftyp") {
         return Some("mp4");
@@ -264,7 +284,9 @@ fn sniff_ext(bytes: &[u8]) -> Option<&'static str> {
     None
 }
 
-fn mime_for_ext(ext: &str) -> &'static str {
+/// Content type for a library asset extension — the single map shared by
+/// imports and the HTTP content route.
+pub fn mime_for_ext(ext: &str) -> &'static str {
     match ext {
         "png" => "image/png",
         "jpg" | "jpeg" => "image/jpeg",
@@ -272,6 +294,14 @@ fn mime_for_ext(ext: &str) -> &'static str {
         "gif" => "image/gif",
         "mp4" => "video/mp4",
         "webm" => "video/webm",
+        "mov" => "video/quicktime",
+        "mkv" => "video/x-matroska",
+        "mp3" => "audio/mpeg",
+        "wav" => "audio/wav",
+        "flac" => "audio/flac",
+        "ogg" => "audio/ogg",
+        "m4a" => "audio/mp4",
+        "opus" => "audio/opus",
         _ => "application/octet-stream",
     }
 }
@@ -304,6 +334,12 @@ pub fn decode_data_url_or_b64(input: &str) -> Result<(Vec<u8>, String)> {
             "image/gif" => "gif",
             "video/mp4" => "mp4",
             "video/webm" => "webm",
+            "audio/mpeg" | "audio/mp3" => "mp3",
+            "audio/wav" | "audio/x-wav" | "audio/wave" => "wav",
+            "audio/flac" | "audio/x-flac" => "flac",
+            "audio/ogg" => "ogg",
+            "audio/mp4" | "audio/m4a" | "audio/x-m4a" => "m4a",
+            "audio/opus" => "opus",
             _ => "bin",
         };
         use base64::Engine as _;
@@ -373,6 +409,43 @@ mod tests {
         assert!(resolve_job_asset(dir.path(), "01JOB", 5).is_none());
         assert!(resolve_job_asset(dir.path(), "NOPE", 0).is_none());
         assert!(resolve_job_asset(dir.path(), "../01JOB", 0).is_none());
+    }
+
+    #[test]
+    fn audio_sniffs_kinds_and_mimes() {
+        // header sniffing for the music-bed formats
+        assert_eq!(sniff_ext(b"RIFF\x00\x00\x00\x00WAVEfmt "), Some("wav"));
+        assert_eq!(sniff_ext(b"fLaC\x00\x00\x00\x22"), Some("flac"));
+        assert_eq!(sniff_ext(b"OggS\x00\x02"), Some("ogg"));
+        assert_eq!(sniff_ext(b"ID3\x04\x00"), Some("mp3"));
+        assert_eq!(sniff_ext(&[0xff, 0xfb, 0x90, 0x00]), Some("mp3"));
+        // jpeg keeps winning over the mp3 frame-sync heuristic
+        assert_eq!(sniff_ext(&[0xff, 0xd8, 0xff, 0xe0]), Some("jpg"));
+
+        assert_eq!(mime_for_ext("mp3"), "audio/mpeg");
+        assert_eq!(mime_for_ext("wav"), "audio/wav");
+        assert_eq!(mime_for_ext("mov"), "video/quicktime");
+
+        // data-URL audio imports map to audio extensions
+        let (bytes, ext) = decode_data_url_or_b64("data:audio/wav;base64,UklGRg==").unwrap();
+        assert_eq!(ext, "wav");
+        assert_eq!(&bytes[..4], b"RIFF");
+    }
+
+    #[test]
+    fn import_kinds_cover_audio() {
+        let dir = tempfile::tempdir().unwrap();
+        let library = Library::new(dir.path().join("library"));
+        let jobs = JobStore::open(&dir.path().join("jobs.sqlite")).unwrap();
+        let wav = b"RIFF\x24\x00\x00\x00WAVEfmt ".to_vec();
+        let r = library
+            .import_bytes(&jobs, &wav, "sonus-track.wav", Some("a bed"), None)
+            .unwrap();
+        assert!(matches!(r.assets[0].kind, AssetKind::Audio));
+        assert_eq!(r.assets[0].mime_type.as_deref(), Some("audio/wav"));
+        // and the imported track resolves as a library asset (music job_id path)
+        let p = resolve_job_asset(&library.root, r.job_id.as_str(), 0).unwrap();
+        assert!(p.ends_with("00.wav"));
     }
 
     #[test]

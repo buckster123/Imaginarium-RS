@@ -418,14 +418,11 @@ async fn library_content(
     match job_content_path(&root, &id, q.i.unwrap_or(0)) {
         Some(path) => match tokio::fs::read(&path).await {
             Ok(bytes) => {
-                let ct = match path.extension().and_then(|e| e.to_str()) {
-                    Some("mp4") => "video/mp4",
-                    Some("webm") => "video/webm",
-                    Some("png") => "image/png",
-                    Some("jpg") | Some("jpeg") => "image/jpeg",
-                    Some("webp") => "image/webp",
-                    _ => "application/octet-stream",
-                };
+                let ct = path
+                    .extension()
+                    .and_then(|e| e.to_str())
+                    .map(|e| imaginarium_core::library::mime_for_ext(&e.to_ascii_lowercase()))
+                    .unwrap_or("application/octet-stream");
                 (
                     StatusCode::OK,
                     [(axum::http::header::CONTENT_TYPE, ct)],

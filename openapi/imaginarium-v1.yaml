@@ -43,9 +43,9 @@ components:
       type: object
       properties:
         id: { type: string }
-        kind: { type: string, enum: [image, video] }
+        kind: { type: string, enum: [image, video, audio], description: audio = imported tracks (music beds) — never produced upstream }
         local_path: { type: string, nullable: true, description: Node-local path (omitted for remote clients) }
-        content_url: { type: string, nullable: true, description: Node-relative bytes path, e.g. /v1/library/{id}/content }
+        content_url: { type: string, nullable: true, description: "Node-relative bytes path, e.g. /v1/library/{id}/content" }
         upstream_url: { type: string, nullable: true, description: Ephemeral xAI URL (may expire) }
         file_id: { type: string, nullable: true }
         public_url: { type: string, nullable: true }
@@ -72,6 +72,58 @@ components:
         created_at: { type: string, format: date-time }
         completed_at: { type: string, format: date-time, nullable: true }
         prompt: { type: string, nullable: true }
+    TextOverlay:
+      type: object
+      required: [text]
+      properties:
+        text: { type: string }
+        start_s: { type: number, default: 0 }
+        end_s: { type: number, default: 3 }
+        x: { type: integer, default: 40 }
+        y: { type: integer, default: 40 }
+        fontsize: { type: integer, default: 28 }
+    TimelineClip:
+      type: object
+      required: [job_id]
+      properties:
+        job_id: { type: string, description: Library job resolving to a local VIDEO file }
+        in_s: { type: number, default: 0 }
+        out_s: { type: number, default: 0, description: 0 = full remaining duration (ffprobe-measured) }
+        gain_db: { type: number, default: 0, description: Gain for this clip's own audio in the master mix }
+        captions:
+          type: array
+          description: Clip-owned captions; times are SEGMENT-LOCAL seconds (max 32 per segment incl. mapped overlays)
+          items: { $ref: '#/components/schemas/TextOverlay' }
+    AudioTrack:
+      type: object
+      required: [job_id]
+      properties:
+        job_id: { type: string, description: Library job holding audio (an imported track, or any video whose audio to borrow) }
+        in_s: { type: number, default: 0, description: Seconds into the source track }
+        start_s: { type: number, default: 0, description: Placement on the master clock }
+        gain_db: { type: number, default: 0 }
+        fade_in_s: { type: number, default: 0 }
+        fade_out_s: { type: number, default: 0, description: Anchored to bed end (track end or video end, whichever first) }
+    VideoTimeline:
+      type: object
+      required: [clips]
+      properties:
+        clips:
+          type: array
+          items: { $ref: '#/components/schemas/TimelineClip' }
+        audio_fade_in_s: { type: number, default: 0, description: Fade on the final master mix }
+        audio_fade_out_s: { type: number, default: 0 }
+        video_fade_in_s: { type: number, default: 0 }
+        video_fade_out_s: { type: number, default: 0 }
+        overlays:
+          type: array
+          description: MASTER-CLOCK overlays (absolute seconds); render on every segment they intersect
+          items: { $ref: '#/components/schemas/TextOverlay' }
+        music: { $ref: '#/components/schemas/AudioTrack' }
+        width: { type: integer, default: 0, description: Canvas width; 0 = first clip's (even-floored) }
+        height: { type: integer, default: 0, description: Canvas height; 0 = first clip's (even-floored) }
+        fps: { type: integer, default: 0, description: Canvas fps; 0 = first clip's (rounded, fallback 24) }
+        note: { type: string, nullable: true }
     Error:
       type: object
       properties:
@@ -269,7 +321,7 @@ paths:
   /v1/library/import:
     post:
       summary: Import bytes (data URL or base64) as a completed library job
-      description: "Request body limit is 64 MB; decoded import payload is capped at 40 MB."
+      description: "Request body limit is 64 MB; decoded import payload is capped at 40 MB. Accepts images, video, and audio (mp3/wav/flac/ogg/m4a/opus — e.g. a Sonus track destined for a craft music bed)."
       requestBody:
         required: true
         content:
@@ -290,16 +342,23 @@ paths:
   /v1/craft/video/render:
     post:
       summary: Render a local craft timeline via ffmpeg into a library job
+      description: >
+        Every clip is normalized onto one canvas (aspect-fit + pad, unified fps,
+        yuv420p) before a stream-copy concat, so mixed-resolution/fps sources cut
+        cleanly. Audio is mixed in a single master-clock pass (clip audio at its
+        timeline offset + the optional music bed, amix normalize=0). Timeline
+        `overlays` use absolute master-clock seconds and render on every segment
+        they intersect; clip `captions` use segment-local seconds. Durations are
+        ffprobe-measured. Clips must be video; audio belongs in `music`.
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              type: object
-              description: VideoTimeline (clips + fades + overlays); clip job_ids are validated.
+              $ref: '#/components/schemas/VideoTimeline'
       responses:
         "200": { description: JobResult, content: { application/json: { schema: { $ref: '#/components/schemas/JobResult' } } } }
-        "400": { description: Empty timeline / ffmpeg missing / invalid job_id }
+        "400": { description: Empty timeline / ffmpeg missing / invalid job_id / bad clip window }
 
   /v1/tokens:
     get:

@@ -66,8 +66,19 @@ Auth model matches ApexOS agentd LAN tokens (Bearer / header / query). Prefer st
 | Video edit/extend | `POST /v1/videos/edits`, `.../extensions` |
 | Jobs | `GET /v1/jobs`, `GET /v1/jobs/{id}`, `POST /v1/jobs/{id}/wait` |
 | Library bytes | `GET /v1/library/{id}/content` |
-| Craft import | `POST /v1/library/import` (≤40 MB decoded; 64 MB body limit) |
+| Craft import | `POST /v1/library/import` (≤40 MB decoded; 64 MB body limit; images, video, **audio** — music beds) |
 | Video craft render | `POST /v1/craft/video/render` (ffmpeg on node) |
+
+**Craft engine (U2a, 2026-07-29).** The render pipeline normalizes every clip
+onto one canvas (aspect-fit + pad, unified fps, `yuv420p`) before a stream-copy
+concat — mixed-resolution/fps sources cut cleanly — then mixes ALL audio in one
+master-clock pass (`amix normalize=0`): each clip's own audio at its timeline
+offset plus an optional **`music`** bed (`AudioTrack`: library job id +
+`in_s`/`start_s`/`gain_db`/fades — import a Sonus track, reference its job id).
+Timeline `overlays` are master-clock seconds and render on every segment they
+intersect; clip `captions` are segment-local. Durations are ffprobe-measured.
+Clips must be video (stills/Ken Burns arrive in a later slice). Full schema:
+the OpenAPI `VideoTimeline`.
 
 Body size: server `DefaultBodyLimit` is **64 MB** (craft/edit data-URLs). `POST /v1/library/import` additionally caps the **decoded** payload at **40 MB** (413 above that) — so the effective import ceiling is 40 MB decoded, not 64.
 
