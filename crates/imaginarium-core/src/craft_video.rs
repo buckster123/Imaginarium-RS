@@ -261,6 +261,54 @@ fn ffmpeg_version_line() -> String {
 }
 
 // ---------------------------------------------------------------------------
+// Thumbnails (posters)
+// ---------------------------------------------------------------------------
+
+/// Write a 480px-wide `thumb.jpg` poster for a media file. Videos take their
+/// poster at 1s in (falling back to the first frame on very short clips);
+/// images are plain downscales. Audio has no thumbnail (honest error).
+pub fn generate_thumb(src: &Path, dest: &Path) -> Result<()> {
+    let ext = path_ext(src);
+    let is_video = VIDEO_EXTS.contains(&ext.as_str());
+    if !is_video && !IMAGE_EXTS.contains(&ext.as_str()) {
+        return Err(Error::other(format!("no thumbnail for .{ext}")));
+    }
+    let attempt = |ss: Option<f64>| -> Result<()> {
+        let mut args = base_args();
+        if let Some(ss) = ss {
+            args.extend(["-ss".into(), format!("{ss:.3}")]);
+        }
+        args.extend([
+            "-i".into(),
+            src.display().to_string(),
+            "-frames:v".into(),
+            "1".into(),
+            "-vf".into(),
+            "scale=480:-2".into(),
+            "-q:v".into(),
+            "4".into(),
+            dest.display().to_string(),
+        ]);
+        run_ffmpeg(&args)
+    };
+    let produced = |p: &Path| std::fs::metadata(p).map(|m| m.len() > 0).unwrap_or(false);
+    if is_video {
+        // -ss past a short clip's end exits 0 with an empty/missing file —
+        // check the artifact, not the exit code.
+        if attempt(Some(1.0)).is_ok() && produced(dest) {
+            return Ok(());
+        }
+        let _ = std::fs::remove_file(dest);
+    }
+    attempt(None)?;
+    if produced(dest) {
+        Ok(())
+    } else {
+        Err(Error::other("thumbnail pass produced no file"))
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Probing
 // ---------------------------------------------------------------------------
 
@@ -1126,12 +1174,15 @@ fn path_ext(p: &Path) -> String {
         .unwrap_or_default()
 }
 
-/// Render timeline with ffmpeg and import result into the library.
+/// Render timeline with ffmpeg and import result into the library. `as_job`
+/// imports under a pre-minted job id (the async craft flow finalizes the
+/// pending row it already returned); None mints a fresh id.
 pub fn render_timeline(
     library: &Library,
     jobs: &JobStore,
     library_root: &Path,
     timeline: &VideoTimeline,
+    as_job: Option<crate::types::JobId>,
 ) -> Result<JobResult> {
     if timeline.clips.is_empty() {
         return Err(Error::other("timeline has no clips"));
@@ -1273,8 +1324,9 @@ pub fn render_timeline(
         "ffmpeg": ffmpeg_version_line(),
         "timeline": timeline,
     });
-    let imported = library.import_bytes(
+    let imported = library.import_bytes_as(
         jobs,
+        as_job.unwrap_or_default(),
         &bytes,
         "craft.mp4",
         Some(&note),
@@ -2033,6 +2085,77 @@ frame= 100 fps=0.0 q=-0.0 size=N/A time=00:00:04.00 bitrate=N/A speed= 512x
     }
 
     #[test]
+    fn thumbs_poster_video_and_image_not_audio() {
+        if !ffmpeg_available() || !ffprobe_available() {
+            eprintln!("skipping thumb test: ffmpeg/ffprobe not on PATH");
+            return;
+        }
+        let dir = tempfile::tempdir().unwrap();
+        let clip = dir.path().join("c.mp4");
+        let img = dir.path().join("i.png");
+        let wav = dir.path().join("m.wav");
+        synth(&[
+            "-f",
+            "lavfi",
+            "-i",
+            "testsrc=duration=2:size=640x360:rate=24",
+            "-c:v",
+            "libx264",
+            "-preset",
+            "veryfast",
+            clip.to_str().unwrap(),
+        ]);
+        synth(&[
+            "-f",
+            "lavfi",
+            "-i",
+            "testsrc=duration=1:size=800x600:rate=1",
+            "-frames:v",
+            "1",
+            img.to_str().unwrap(),
+        ]);
+        synth(&[
+            "-f",
+            "lavfi",
+            "-i",
+            "sine=frequency=220:duration=1",
+            wav.to_str().unwrap(),
+        ]);
+
+        // video poster (1s in) and image downscale both land as real JPEGs
+        for src in [&clip, &img] {
+            let t = dir.path().join(format!(
+                "{}.thumb.jpg",
+                src.file_stem().unwrap().to_str().unwrap()
+            ));
+            generate_thumb(src, &t).unwrap();
+            let bytes = std::fs::read(&t).unwrap();
+            assert!(bytes.len() > 100, "thumb too small: {}", bytes.len());
+            assert_eq!(&bytes[..2], &[0xff, 0xd8], "not a JPEG");
+        }
+        // a sub-1s poster point still yields a first-frame poster
+        let short = dir.path().join("s.mp4");
+        synth(&[
+            "-f",
+            "lavfi",
+            "-i",
+            "testsrc=duration=0.5:size=320x240:rate=24",
+            "-c:v",
+            "libx264",
+            "-preset",
+            "veryfast",
+            short.to_str().unwrap(),
+        ]);
+        let st = dir.path().join("s.thumb.jpg");
+        generate_thumb(&short, &st).unwrap();
+        assert!(std::fs::metadata(&st).unwrap().len() > 100);
+        // audio has no thumbnail — honest error, no file
+        let at = dir.path().join("a.thumb.jpg");
+        assert!(generate_thumb(&wav, &at).is_err());
+        assert!(!at.exists());
+    }
+
+    #[test]
     fn e2e_full_grammar_render_with_cache() {
         if !ffmpeg_available() || !ffprobe_available() {
             eprintln!("skipping e2e craft test: ffmpeg/ffprobe not on PATH");
@@ -2195,7 +2318,7 @@ frame= 100 fps=0.0 q=-0.0 size=N/A time=00:00:04.00 bitrate=N/A speed= 512x
             note: Some("u2b e2e".into()),
         };
 
-        let out = render_timeline(&library, &jobs, &root, &tl).unwrap();
+        let out = render_timeline(&library, &jobs, &root, &tl, None).unwrap();
         assert!(out.ok);
         let out_path = PathBuf::from(out.assets[0].local_path.as_ref().unwrap());
         let p = probe_media(&out_path).unwrap();
@@ -2211,6 +2334,11 @@ frame= 100 fps=0.0 q=-0.0 size=N/A time=00:00:04.00 bitrate=N/A speed= 512x
         // the mix + loudnorm passes delivered an audio track
         assert!(p.has_audio);
 
+        // eager thumbs: the imported video and the craft output both carry posters
+        let ja_media = resolve_job_media(&root, &ja.job_id.to_string()).unwrap();
+        assert!(ja_media.parent().unwrap().join("thumb.jpg").is_file());
+        assert!(out_path.parent().unwrap().join("thumb.jpg").is_file());
+
         // provenance rides the craft job's meta.json
         let meta_path = out_path.parent().unwrap().join("meta.json");
         let meta: serde_json::Value =
@@ -2223,8 +2351,15 @@ frame= 100 fps=0.0 q=-0.0 size=N/A time=00:00:04.00 bitrate=N/A speed= 512x
         let cache = segment_cache_dir(&library);
         let count = std::fs::read_dir(&cache).unwrap().flatten().count();
         assert_eq!(count, 4, "each segment cached once");
-        let out2 = render_timeline(&library, &jobs, &root, &tl).unwrap();
+        let pre = crate::types::JobId::new();
+        let out2 = render_timeline(&library, &jobs, &root, &tl, Some(pre.clone())).unwrap();
         assert!(out2.ok);
+        // the async flow's pre-minted id is honored on import
+        assert_eq!(out2.job_id, pre);
+        assert!(matches!(
+            jobs.get(&pre).unwrap().unwrap().status,
+            crate::types::JobStatus::Done
+        ));
         let count2 = std::fs::read_dir(&cache).unwrap().flatten().count();
         assert_eq!(count2, 4, "second render re-used every cached segment");
     }
