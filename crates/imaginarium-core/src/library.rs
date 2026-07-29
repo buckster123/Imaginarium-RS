@@ -49,9 +49,34 @@ impl Library {
     /// Import raw bytes as a new completed library job (Studio+ craft / upload).
     /// `provenance` (when given) is stored under `meta.json`'s `provenance` key —
     /// craft renders record their full timeline + engine/tool versions there.
+    #[allow(clippy::too_many_arguments)]
     pub fn import_bytes(
         &self,
         jobs: &JobStore,
+        bytes: &[u8],
+        filename_hint: &str,
+        note: Option<&str>,
+        source_job_id: Option<&str>,
+        provenance: Option<&serde_json::Value>,
+    ) -> Result<JobResult> {
+        self.import_bytes_as(
+            jobs,
+            JobId::new(),
+            bytes,
+            filename_hint,
+            note,
+            source_job_id,
+            provenance,
+        )
+    }
+
+    /// `import_bytes` under a caller-supplied job id — the async craft flow
+    /// finalizes the pending row it already handed out.
+    #[allow(clippy::too_many_arguments)]
+    pub fn import_bytes_as(
+        &self,
+        jobs: &JobStore,
+        job_id: JobId,
         bytes: &[u8],
         filename_hint: &str,
         note: Option<&str>,
@@ -65,11 +90,15 @@ impl Library {
             "mp3" | "wav" | "flac" | "ogg" | "m4a" | "opus" => AssetKind::Audio,
             _ => AssetKind::Image,
         };
-        let job_id = JobId::new();
         let dir = self.ensure_job_dir(&job_id)?;
         let file_name = format!("00.{ext}");
         let path = dir.join(&file_name);
         std::fs::write(&path, bytes)?;
+        if matches!(kind, AssetKind::Image | AssetKind::Video) {
+            // Best-effort poster beside the asset; the /thumb route re-tries
+            // lazily if this misses (no ffmpeg, malformed bytes, ...).
+            let _ = crate::craft_video::generate_thumb(&path, &dir.join("thumb.jpg"));
+        }
 
         let note = note.unwrap_or("craft import");
         let _ = self.write_prompt(&dir, note);
@@ -199,6 +228,8 @@ pub fn resolve_job_asset(library_root: &Path, job_id: &str, index: u32) -> Optio
                     .map(|e| e.path())
                     .filter(|p| {
                         p.is_file()
+                            // the poster sidecar is never an addressable asset
+                            && p.file_name().and_then(|n| n.to_str()) != Some("thumb.jpg")
                             && p.extension()
                                 .and_then(|e| e.to_str())
                                 .map(|e| MEDIA_EXTS.contains(&e.to_ascii_lowercase().as_str()))
@@ -407,10 +438,14 @@ mod tests {
         std::fs::write(job.join("01.png"), b"b").unwrap();
         std::fs::write(job.join("meta.json"), b"{}").unwrap();
 
+        // the poster sidecar must never shadow or extend the asset list
+        std::fs::write(job.join("thumb.jpg"), b"poster").unwrap();
+
         let p0 = resolve_job_asset(dir.path(), "01JOB", 0).unwrap();
         let p1 = resolve_job_asset(dir.path(), "01JOB", 1).unwrap();
         assert!(p0.ends_with("00.png"));
         assert!(p1.ends_with("01.png"));
+        assert!(resolve_job_asset(dir.path(), "01JOB", 2).is_none());
         // Out-of-range index and unknown job → None; meta.json never resolves.
         assert!(resolve_job_asset(dir.path(), "01JOB", 5).is_none());
         assert!(resolve_job_asset(dir.path(), "NOPE", 0).is_none());

@@ -66,6 +66,7 @@ Auth model matches ApexOS agentd LAN tokens (Bearer / header / query). Prefer st
 | Video edit/extend | `POST /v1/videos/edits`, `.../extensions` |
 | Jobs | `GET /v1/jobs`, `GET /v1/jobs/{id}`, `POST /v1/jobs/{id}/wait` |
 | Library bytes | `GET /v1/library/{id}/content` |
+| Poster thumb | `GET /v1/library/{id}/thumb` (480px JPEG; lazy-built, eager on import) |
 | Craft import | `POST /v1/library/import` (≤40 MB decoded; 64 MB body limit; images, video, **audio** — music beds) |
 | Video craft render | `POST /v1/craft/video/render` (ffmpeg on node) |
 
@@ -88,6 +89,15 @@ segment-local. Durations are ffprobe-measured. Segments are content-hash cached
 re-encodes. Craft jobs carry full provenance in `meta.json` (contract version,
 engine, ffmpeg version, the submitted timeline). Full schema: the OpenAPI
 `VideoTimeline`.
+
+**U3 additions (2026-07-29).** `POST /v1/craft/video/render?no_wait=true`
+returns a **pending** craft job immediately and renders in the background —
+poll `GET /v1/jobs/{id}` like any job (`POST /wait` on a craft job returns the
+current row; it never touches upstream). A failed background render flips the
+job to `failed` with the error — craft jobs never sit pending forever. Every
+visual library job carries a **480px JPEG poster**: `GET /v1/library/{id}/thumb`
+(eager on import, rebuilt lazily on demand — pre-U3 content included). The
+`thumb.jpg` sidecar is never addressable as a media asset.
 
 Body size: server `DefaultBodyLimit` is **64 MB** (craft/edit data-URLs). `POST /v1/library/import` additionally caps the **decoded** payload at **40 MB** (413 above that) — so the effective import ceiling is 40 MB decoded, not 64.
 

@@ -121,7 +121,7 @@ upstream (this repo) slices, in order:
       contract (style block, segment kinds clip/still+Ken-Burns/card, speed,
       letterbox recipes), two-pass loudnorm ship pass, content-hash segment
       caching, provenance field.
-- [ ] **U3 — thumbnails/posters** (`thumb.jpg` on completion + `/v1/library/{id}/thumb`)
+- [x] **U3 — thumbnails/posters** (`thumb.jpg` on completion + `/v1/library/{id}/thumb`)
       + **async craft render** (job id immediately, poll like any job).
 - [ ] Web studio adoption pass: `assetSrc` uses `?i=` (fixes the n>1
       duplicate-image render), chain loads switch to `library:` refs (drops the

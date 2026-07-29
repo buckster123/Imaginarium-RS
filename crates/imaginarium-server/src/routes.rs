@@ -14,7 +14,7 @@ use imaginarium_core::jobs::JobStore;
 use imaginarium_core::library::media_from_node_input;
 use imaginarium_core::models::{parse_model_selector, ModelId};
 use imaginarium_core::tokens::TokenScope;
-use imaginarium_core::types::{JobId, JobStatus, MediaRef};
+use imaginarium_core::types::{JobId, JobMode, JobResult, JobStatus, MediaRef};
 use serde::Deserialize;
 use serde_json::{json, Value};
 
@@ -38,6 +38,7 @@ pub fn api_router(state: AppState) -> Router {
         .route("/v1/jobs/{id}", get(jobs_get))
         .route("/v1/jobs/{id}/wait", post(jobs_wait))
         .route("/v1/library/{id}/content", get(library_content))
+        .route("/v1/library/{id}/thumb", get(library_thumb))
         .route("/v1/library/import", post(library_import))
         .route("/v1/craft/video/render", post(craft_video_render))
         .route("/v1/tokens", get(tokens_list).post(tokens_create))
@@ -378,6 +379,11 @@ async fn jobs_wait(State(state): State<AppState>, Path(id): Path<String>) -> Res
         {
             return Json(j).into_response();
         }
+        // A craft job is advanced by the local render task, not xAI — its DB
+        // row IS the truth; return it and let the caller poll.
+        Ok(Some(j)) if matches!(j.mode, JobMode::CraftExport) => {
+            return Json(j).into_response();
+        }
         Ok(Some(_)) => {}
         Err(e) => return err_response(StatusCode::INTERNAL_SERVER_ERROR, e),
     }
@@ -436,6 +442,47 @@ async fn library_content(
     }
 }
 
+/// Serve (or lazily build) the 480px poster for a job's first asset.
+async fn library_thumb(State(state): State<AppState>, Path(id): Path<String>) -> Response {
+    if !imaginarium_core::library::is_safe_asset_id(&id) {
+        return err_response(StatusCode::BAD_REQUEST, "invalid asset id");
+    }
+    let root = state.cfg.library_dir();
+    let Some(media) = job_content_path(&root, &id, 0) else {
+        return err_response(StatusCode::NOT_FOUND, "asset not found");
+    };
+    let Some(dir) = media.parent().map(|p| p.to_path_buf()) else {
+        return err_response(StatusCode::NOT_FOUND, "asset not found");
+    };
+    let thumb = dir.join("thumb.jpg");
+    let missing = std::fs::metadata(&thumb)
+        .map(|m| m.len() == 0)
+        .unwrap_or(true);
+    if missing {
+        // Lazy backfill — covers assets that predate eager thumbs and any
+        // import where the eager pass missed.
+        let (m, t) = (media.clone(), thumb.clone());
+        let built = tokio::task::spawn_blocking(move || {
+            imaginarium_core::craft_video::generate_thumb(&m, &t)
+        })
+        .await;
+        match built {
+            Ok(Ok(())) => {}
+            Ok(Err(e)) => return err_response(StatusCode::NOT_FOUND, format!("no thumbnail: {e}")),
+            Err(e) => return err_response(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()),
+        }
+    }
+    match tokio::fs::read(&thumb).await {
+        Ok(bytes) => (
+            StatusCode::OK,
+            [(axum::http::header::CONTENT_TYPE, "image/jpeg")],
+            bytes,
+        )
+            .into_response(),
+        Err(e) => err_response(StatusCode::INTERNAL_SERVER_ERROR, e),
+    }
+}
+
 #[derive(Debug, Deserialize)]
 struct LibraryImportBody {
     /// data URL or raw base64
@@ -477,8 +524,17 @@ async fn library_import(
     }
 }
 
+#[derive(Debug, Deserialize)]
+struct CraftQuery {
+    /// `?no_wait=true` returns a pending craft job immediately; poll it with
+    /// `GET /v1/jobs/{id}` (or `/wait`) like any other job. Default = block
+    /// until the render lands (the historic behavior).
+    no_wait: Option<bool>,
+}
+
 async fn craft_video_render(
     State(state): State<AppState>,
+    Query(q): Query<CraftQuery>,
     Json(body): Json<imaginarium_core::craft_video::VideoTimeline>,
 ) -> Response {
     let jobs = match JobStore::open(&state.cfg.db_path()) {
@@ -486,10 +542,60 @@ async fn craft_video_render(
         Err(e) => return err_response(StatusCode::INTERNAL_SERVER_ERROR, e),
     };
     let lib_root = state.cfg.library_dir();
-    // ffmpeg is blocking — run off the async worker.
     let library = state.library.clone();
+
+    if q.no_wait.unwrap_or(false) {
+        let job_id = JobId::new();
+        let pending = JobResult::pending(
+            job_id.clone(),
+            JobMode::CraftExport,
+            "local-craft",
+            body.note.clone(),
+        );
+        if let Err(e) = jobs.upsert_result(&pending) {
+            return err_response(StatusCode::INTERNAL_SERVER_ERROR, e);
+        }
+        let db_path = state.cfg.db_path();
+        tokio::spawn(async move {
+            let jid = job_id.clone();
+            let rendered = tokio::task::spawn_blocking(move || {
+                imaginarium_core::craft_video::render_timeline(
+                    &library,
+                    &jobs,
+                    &lib_root,
+                    &body,
+                    Some(jid),
+                )
+            })
+            .await;
+            // Success finalizes inside render_timeline (import under job_id);
+            // every failure path must flip the row to failed — a craft job
+            // must never sit pending forever.
+            let err_msg = match rendered {
+                Ok(Ok(_)) => None,
+                Ok(Err(e)) => Some(e.to_string()),
+                Err(e) => Some(format!("render task panicked: {e}")),
+            };
+            if let Some(msg) = err_msg {
+                tracing::warn!(job = %job_id, err = %msg, "async craft render failed");
+                if let Ok(store) = JobStore::open(&db_path) {
+                    let failed = JobResult::failure(
+                        job_id,
+                        JobMode::CraftExport,
+                        "local-craft",
+                        "craft",
+                        msg,
+                    );
+                    let _ = store.upsert_result(&failed);
+                }
+            }
+        });
+        return Json(pending).into_response();
+    }
+
+    // Synchronous path — ffmpeg is blocking, run off the async worker.
     let result = tokio::task::spawn_blocking(move || {
-        imaginarium_core::craft_video::render_timeline(&library, &jobs, &lib_root, &body)
+        imaginarium_core::craft_video::render_timeline(&library, &jobs, &lib_root, &body, None)
     })
     .await;
     match result {

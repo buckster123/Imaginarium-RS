@@ -337,6 +337,17 @@ paths:
         "400": { description: Invalid asset id }
         "404": { description: Asset not found }
 
+  /v1/library/{job_id}/thumb:
+    get:
+      summary: 480px JPEG poster for a job's first asset (thumb.jpg)
+      description: "Generated eagerly on import/completion and rebuilt lazily on demand (covers pre-thumb library content). Videos take their poster ~1s in; images are downscales. Audio-only jobs 404. The thumb.jpg sidecar is never addressable as a media asset."
+      parameters:
+        - { name: job_id, in: path, required: true, schema: { type: string } }
+      responses:
+        "200": { description: JPEG bytes }
+        "400": { description: Invalid asset id }
+        "404": { description: Asset not found / no thumbnail (audio) }
+
   /v1/library/import:
     post:
       summary: Import bytes (data URL or base64) as a completed library job
@@ -374,6 +385,8 @@ paths:
         ffprobe-measured. Segments are content-hash cached — unchanged segments
         are never re-encoded on a re-render. The craft job's meta.json carries
         full provenance (contract version, engine, ffmpeg version, timeline).
+      parameters:
+        - { name: no_wait, in: query, required: false, schema: { type: boolean, default: false }, description: "true = return a pending craft job immediately and render in the background; poll GET /v1/jobs/{id} (or POST /wait — for craft jobs it returns the current row without touching upstream). Default blocks until the render lands." }
       requestBody:
         required: true
         content:
@@ -381,8 +394,8 @@ paths:
             schema:
               $ref: '#/components/schemas/VideoTimeline'
       responses:
-        "200": { description: JobResult, content: { application/json: { schema: { $ref: '#/components/schemas/JobResult' } } } }
-        "400": { description: Empty timeline / ffmpeg missing / invalid job_id / bad clip window }
+        "200": { description: "JobResult — done with assets (sync), or pending (no_wait; a failed render flips the job to failed with the error)", content: { application/json: { schema: { $ref: '#/components/schemas/JobResult' } } } }
+        "400": { description: Empty timeline / ffmpeg missing / invalid job_id / bad clip window (sync path) }
 
   /v1/tokens:
     get:

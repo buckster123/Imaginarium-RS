@@ -168,6 +168,31 @@ pub struct JobResult {
 }
 
 impl JobResult {
+    /// A freshly-accepted job that hasn't produced anything yet (the async
+    /// craft flow returns this row immediately; the render task finalizes it).
+    pub fn pending(
+        job_id: JobId,
+        mode: JobMode,
+        model: impl Into<String>,
+        prompt: Option<String>,
+    ) -> Self {
+        Self {
+            ok: true,
+            job_id,
+            upstream_request_id: None,
+            status: JobStatus::Pending,
+            mode,
+            model: model.into(),
+            assets: vec![],
+            usage: None,
+            error: None,
+            error_type: None,
+            created_at: Utc::now(),
+            completed_at: None,
+            prompt,
+        }
+    }
+
     pub fn failure(
         job_id: JobId,
         mode: JobMode,
