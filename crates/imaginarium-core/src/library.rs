@@ -47,6 +47,8 @@ impl Library {
     }
 
     /// Import raw bytes as a new completed library job (Studio+ craft / upload).
+    /// `provenance` (when given) is stored under `meta.json`'s `provenance` key —
+    /// craft renders record their full timeline + engine/tool versions there.
     pub fn import_bytes(
         &self,
         jobs: &JobStore,
@@ -54,6 +56,7 @@ impl Library {
         filename_hint: &str,
         note: Option<&str>,
         source_job_id: Option<&str>,
+        provenance: Option<&serde_json::Value>,
     ) -> Result<JobResult> {
         let ext = extension_from_name(filename_hint)
             .unwrap_or_else(|| sniff_ext(bytes).unwrap_or("bin").to_string());
@@ -70,12 +73,15 @@ impl Library {
 
         let note = note.unwrap_or("craft import");
         let _ = self.write_prompt(&dir, note);
-        let meta = serde_json::json!({
+        let mut meta = serde_json::json!({
             "source": "library_import",
             "filename_hint": filename_hint,
             "source_job_id": source_job_id,
             "bytes": bytes.len(),
         });
+        if let Some(p) = provenance {
+            meta["provenance"] = p.clone();
+        }
         let _ = self.write_meta(&dir, &meta);
 
         let content_url = format!("/v1/library/{}/content", job_id.as_str());
@@ -439,7 +445,7 @@ mod tests {
         let jobs = JobStore::open(&dir.path().join("jobs.sqlite")).unwrap();
         let wav = b"RIFF\x24\x00\x00\x00WAVEfmt ".to_vec();
         let r = library
-            .import_bytes(&jobs, &wav, "sonus-track.wav", Some("a bed"), None)
+            .import_bytes(&jobs, &wav, "sonus-track.wav", Some("a bed"), None, None)
             .unwrap();
         assert!(matches!(r.assets[0].kind, AssetKind::Audio));
         assert_eq!(r.assets[0].mime_type.as_deref(), Some("audio/wav"));

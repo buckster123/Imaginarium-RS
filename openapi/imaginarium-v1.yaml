@@ -81,19 +81,36 @@ components:
         end_s: { type: number, default: 3 }
         x: { type: integer, default: 40 }
         y: { type: integer, default: 40 }
-        fontsize: { type: integer, default: 28 }
+        fontsize: { type: integer, default: 0, description: 0 = inherit style caption_fontsize, then 28 }
+        color: { type: string, default: "", description: Named color or '#RRGGBB'; empty = inherit style caption_color, then white }
     TimelineClip:
       type: object
-      required: [job_id]
+      description: One timeline segment. kind=clip needs job_id (+optional in_s/out_s/speed/gain_db); kind=still needs job_id (an image) + dur_s (+optional zoom_from/zoom_to for Ken Burns); kind=card needs dur_s (+optional card_color, captions carry the text).
       properties:
-        job_id: { type: string, description: Library job resolving to a local VIDEO file }
+        kind: { type: string, enum: [clip, still, card], default: clip }
+        job_id: { type: string, description: Library job id — a video for clip, an image for still; forbidden on card }
         in_s: { type: number, default: 0 }
         out_s: { type: number, default: 0, description: 0 = full remaining duration (ffprobe-measured) }
         gain_db: { type: number, default: 0, description: Gain for this clip's own audio in the master mix }
+        speed: { type: number, default: 1.0, description: Clip playback speed 0.5-2.0; audio follows via atempo }
+        dur_s: { type: number, default: 0, description: Segment duration — required for still/card }
+        zoom_from: { type: number, default: 1.0, description: Ken-Burns start zoom (still), 1.0-3.0 }
+        zoom_to: { type: number, default: 1.0, description: Ken-Burns end zoom (still), 1.0-3.0 }
+        card_color: { type: string, default: "", description: Card background; empty = style card_bg, then black }
         captions:
           type: array
-          description: Clip-owned captions; times are SEGMENT-LOCAL seconds (max 32 per segment incl. mapped overlays)
+          description: Segment-owned captions; times are SEGMENT-LOCAL seconds (max 32 per segment incl. mapped overlays)
           items: { $ref: '#/components/schemas/TextOverlay' }
+    CraftStyle:
+      type: object
+      description: Global styling — config-not-code aesthetics.
+      properties:
+        caption_fontsize: { type: integer, default: 0, description: Default for captions that set none (0 = 28) }
+        caption_color: { type: string, default: "", description: Default caption color (empty = white) }
+        card_bg: { type: string, default: "", description: Default card background (empty = black) }
+        letterbox_frac: { type: number, default: 0, description: Cinematic bars — EACH bar's height as a fraction of canvas height, 0-0.45 }
+        letterbox_reveal_s: { type: number, default: 0, description: Bars open from fully closed over this many seconds at the start (master clock) }
+        loudnorm: { type: boolean, default: false, description: Two-pass EBU R128 loudness normalization on the final mix }
     AudioTrack:
       type: object
       required: [job_id]
@@ -108,6 +125,7 @@ components:
       type: object
       required: [clips]
       properties:
+        version: { type: integer, default: 0, description: Contract version — 0/absent = legacy, 1 = the full grammar (kinds/style/speed); newer than the engine → 400 }
         clips:
           type: array
           items: { $ref: '#/components/schemas/TimelineClip' }
@@ -120,6 +138,7 @@ components:
           description: MASTER-CLOCK overlays (absolute seconds); render on every segment they intersect
           items: { $ref: '#/components/schemas/TextOverlay' }
         music: { $ref: '#/components/schemas/AudioTrack' }
+        style: { $ref: '#/components/schemas/CraftStyle' }
         width: { type: integer, default: 0, description: Canvas width; 0 = first clip's (even-floored) }
         height: { type: integer, default: 0, description: Canvas height; 0 = first clip's (even-floored) }
         fps: { type: integer, default: 0, description: Canvas fps; 0 = first clip's (rounded, fallback 24) }
@@ -343,13 +362,18 @@ paths:
     post:
       summary: Render a local craft timeline via ffmpeg into a library job
       description: >
-        Every clip is normalized onto one canvas (aspect-fit + pad, unified fps,
-        yuv420p) before a stream-copy concat, so mixed-resolution/fps sources cut
-        cleanly. Audio is mixed in a single master-clock pass (clip audio at its
-        timeline offset + the optional music bed, amix normalize=0). Timeline
-        `overlays` use absolute master-clock seconds and render on every segment
-        they intersect; clip `captions` use segment-local seconds. Durations are
-        ffprobe-measured. Clips must be video; audio belongs in `music`.
+        Every segment is normalized onto one canvas (aspect-fit + pad, unified
+        fps, yuv420p) before a stream-copy concat, so mixed-resolution/fps
+        sources cut cleanly. Segment kinds: clip (trim + speed), still (image +
+        Ken-Burns zoom), card (solid color + captions). Audio is mixed in a
+        single master-clock pass (clip audio at its timeline offset, speed-
+        matched, + the optional music bed, amix normalize=0), with an optional
+        two-pass loudnorm ship pass (style.loudnorm). Timeline `overlays` use
+        absolute master-clock seconds and render on every segment they
+        intersect; segment `captions` use segment-local seconds. Durations are
+        ffprobe-measured. Segments are content-hash cached — unchanged segments
+        are never re-encoded on a re-render. The craft job's meta.json carries
+        full provenance (contract version, engine, ffmpeg version, timeline).
       requestBody:
         required: true
         content:
