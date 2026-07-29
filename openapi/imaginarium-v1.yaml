@@ -151,7 +151,7 @@ paths:
                 images:
                   type: array
                   maxItems: 3
-                  items: { type: string, description: "data: URL, http(s) URL, or xAI file_… id. Local filesystem paths are rejected from the network surface." }
+                  items: { type: string, description: "library:{job_id} (node-library chain ref — preferred; #n suffix addresses batch asset n), data: URL, http(s) URL, or xAI file_… id. Bare local filesystem paths are rejected from the network surface." }
                 model: { type: string }
                 n: { type: integer }
                 aspect_ratio: { type: string }
@@ -174,8 +174,8 @@ paths:
               properties:
                 prompt: { type: string }
                 model: { type: string, description: "\"auto\"/omit auto-selects by modality (I2V→video-1.5, else video)" }
-                image: { type: string, description: "data:/http(s)/file_… (I2V)" }
-                reference_images: { type: array, items: { type: string } }
+                image: { type: string, description: "I2V start frame: library:{job_id}, data:, http(s), or file_…" }
+                reference_images: { type: array, items: { type: string, description: "library:{job_id}, data:, http(s), or file_…" } }
                 duration: { type: integer, description: "1-15s (clamped)" }
                 aspect_ratio: { type: string }
                 resolution: { type: string, enum: [480p, 720p, 1080p] }
@@ -197,7 +197,7 @@ paths:
               required: [prompt, video]
               properties:
                 prompt: { type: string }
-                video: { type: string, description: "data:/http(s)/file_…" }
+                video: { type: string, description: "library:{job_id}, data:, http(s), or file_…" }
                 model: { type: string }
                 no_wait: { type: boolean }
       responses:
@@ -232,7 +232,7 @@ paths:
       parameters:
         - { name: limit, in: query, required: false, schema: { type: integer, default: 20 } }
       responses:
-        "200": { description: Array of job summary rows }
+        "200": { description: "Array of job summary rows: job_id, status, mode, model, created_at, error, prompt, assets (media count — address each via /content?i=N)" }
 
   /v1/jobs/{job_id}:
     get:
@@ -256,10 +256,11 @@ paths:
 
   /v1/library/{job_id}/content:
     get:
-      summary: Stream the first media file for a job (bytes)
-      description: "job_id is validated as a safe id (no path traversal). Content-Type is inferred from the file."
+      summary: Stream a media file for a job (bytes)
+      description: "job_id is validated as a safe id (no path traversal). ?i=N addresses the N-th asset of a batch (default 0 — the historic first file). Content-Type is inferred from the file."
       parameters:
         - { name: job_id, in: path, required: true, schema: { type: string } }
+        - { name: i, in: query, required: false, schema: { type: integer, default: 0 }, description: Asset index within the job }
       responses:
         "200": { description: Raw image/video bytes }
         "400": { description: Invalid asset id }

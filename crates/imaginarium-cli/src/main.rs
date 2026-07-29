@@ -11,7 +11,7 @@ use imaginarium_core::client::{
 use imaginarium_core::config::Config;
 use imaginarium_core::estimate::{self, CostEstimate};
 use imaginarium_core::jobs::JobStore;
-use imaginarium_core::library::Library;
+use imaginarium_core::library::{media_from_local_input, Library};
 use imaginarium_core::models::{self, ModelId};
 use imaginarium_core::types::MediaRef;
 use imaginarium_core::{DEFAULT_BIND, PRODUCT, VERSION};
@@ -504,7 +504,7 @@ async fn main() -> Result<()> {
                     let model = ModelId::parse(model)?;
                     let refs: Vec<MediaRef> = images
                         .iter()
-                        .map(|s| MediaRef::from_user_input(s))
+                        .map(|s| media_from_local_input(s, &cfg.library_dir()))
                         .collect();
                     let result = client
                         .image_edit(
@@ -591,7 +591,7 @@ async fn main() -> Result<()> {
                                 prompt: prompt.clone(),
                                 model,
                                 explicit_model: explicit,
-                                image: Some(MediaRef::from_user_input(image)),
+                                image: Some(media_from_local_input(image, &cfg.library_dir())),
                                 reference_images: vec![],
                                 duration: Some(*duration),
                                 aspect_ratio: aspect_ratio.clone(),
@@ -621,7 +621,7 @@ async fn main() -> Result<()> {
                     let (model, explicit) = parse_optional_model(model.as_deref())?;
                     let refs: Vec<MediaRef> = references
                         .iter()
-                        .map(|s| MediaRef::from_user_input(s))
+                        .map(|s| media_from_local_input(s, &cfg.library_dir()))
                         .collect();
                     let result = client
                         .video_generate(
@@ -660,7 +660,7 @@ async fn main() -> Result<()> {
                         .video_edit(
                             VideoEditRequest {
                                 prompt: prompt.clone(),
-                                video: MediaRef::from_user_input(video),
+                                video: media_from_local_input(video, &cfg.library_dir()),
                                 model,
                             },
                             &library,
@@ -687,7 +687,7 @@ async fn main() -> Result<()> {
                         .video_extend(
                             VideoExtendRequest {
                                 prompt: prompt.clone(),
-                                video: MediaRef::from_user_input(video),
+                                video: media_from_local_input(video, &cfg.library_dir()),
                                 duration: Some(*duration),
                                 model,
                             },

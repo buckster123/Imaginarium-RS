@@ -11,9 +11,9 @@ use imaginarium_core::client::{
 use imaginarium_core::config::Config;
 use imaginarium_core::estimate;
 use imaginarium_core::jobs::JobStore;
-use imaginarium_core::library::Library;
+use imaginarium_core::library::{media_from_node_input, Library};
 use imaginarium_core::models::ModelId;
-use imaginarium_core::types::{JobId, JobResult, MediaRef};
+use imaginarium_core::types::{JobId, JobResult};
 use reqwest::Client;
 use serde_json::{json, Value};
 
@@ -136,7 +136,7 @@ impl Backend for LocalBackend {
             .ok_or_else(|| anyhow!("images required"))?
             .iter()
             .filter_map(|v| v.as_str())
-            .map(MediaRef::from_remote_input)
+            .map(|s| media_from_node_input(s, &self.library.root))
             .collect::<std::result::Result<Vec<_>, _>>()
             .map_err(|e| anyhow!(e))?;
         let model = parse_model(args["model"].as_str(), "image")?;
@@ -172,14 +172,14 @@ impl Backend for LocalBackend {
             Some(a) => a
                 .iter()
                 .filter_map(|v| v.as_str())
-                .map(MediaRef::from_remote_input)
+                .map(|s| media_from_node_input(s, &self.library.root))
                 .collect::<std::result::Result<Vec<_>, _>>()
                 .map_err(|e| anyhow!(e))?,
             None => Vec::new(),
         };
         let image = args["image"]
             .as_str()
-            .map(MediaRef::from_remote_input)
+            .map(|s| media_from_node_input(s, &self.library.root))
             .transpose()
             .map_err(|e| anyhow!(e))?;
         let no_wait = args["no_wait"].as_bool().unwrap_or(false);
@@ -226,7 +226,8 @@ impl Backend for LocalBackend {
             .video_edit(
                 VideoEditRequest {
                     prompt,
-                    video: MediaRef::from_remote_input(video).map_err(|e| anyhow!(e))?,
+                    video: media_from_node_input(video, &self.library.root)
+                        .map_err(|e| anyhow!(e))?,
                     model,
                 },
                 &self.library,
@@ -258,7 +259,8 @@ impl Backend for LocalBackend {
             .video_extend(
                 VideoExtendRequest {
                     prompt,
-                    video: MediaRef::from_remote_input(video).map_err(|e| anyhow!(e))?,
+                    video: media_from_node_input(video, &self.library.root)
+                        .map_err(|e| anyhow!(e))?,
                     duration: args["duration"].as_u64().map(|d| d as u32),
                     model,
                 },

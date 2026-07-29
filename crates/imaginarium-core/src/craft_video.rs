@@ -73,51 +73,10 @@ pub struct VideoTimeline {
 }
 
 /// Resolve first media file for a job under library root (YYYY/MM/DD/job_id/).
+/// Delegates to the library's indexed resolver (index 0 = the historic
+/// first-file behavior) so craft renders and the content route share one walk.
 pub fn resolve_job_media(library_root: &Path, job_id: &str) -> Option<PathBuf> {
-    // Never join an unsafe id onto the filesystem (path-traversal guard).
-    if !crate::library::is_safe_asset_id(job_id) {
-        return None;
-    }
-    if !library_root.is_dir() {
-        return None;
-    }
-    for year in std::fs::read_dir(library_root).ok()? {
-        let year = year.ok()?.path();
-        if !year.is_dir() {
-            continue;
-        }
-        for month in std::fs::read_dir(&year).ok()? {
-            let month = month.ok()?.path();
-            for day in std::fs::read_dir(&month).ok()? {
-                let day = day.ok()?.path();
-                let job_dir = day.join(job_id);
-                if !job_dir.is_dir() {
-                    continue;
-                }
-                for name in ["00.mp4", "0.mp4", "00.webm", "00.png", "0.png"] {
-                    let p = job_dir.join(name);
-                    if p.is_file() {
-                        return Some(p);
-                    }
-                }
-                if let Ok(rd) = std::fs::read_dir(&job_dir) {
-                    for e in rd.flatten() {
-                        let p = e.path();
-                        if p.is_file() {
-                            let ext = p.extension().and_then(|e| e.to_str()).unwrap_or("");
-                            if matches!(
-                                ext,
-                                "mp4" | "webm" | "mov" | "mkv" | "png" | "jpg" | "jpeg" | "webp"
-                            ) {
-                                return Some(p);
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-    None
+    crate::library::resolve_job_asset(library_root, job_id, 0)
 }
 
 pub fn ffmpeg_available() -> bool {

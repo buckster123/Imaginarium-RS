@@ -7,7 +7,7 @@ use tracing::info;
 
 use crate::error::{Error, Result};
 use crate::jobs::JobStore;
-use crate::types::{Asset, AssetId, AssetKind, JobId, JobMode, JobResult, JobStatus};
+use crate::types::{Asset, AssetId, AssetKind, JobId, JobMode, JobResult, JobStatus, MediaRef};
 
 #[derive(Debug, Clone)]
 pub struct Library {
@@ -121,6 +121,123 @@ pub fn is_safe_asset_id(id: &str) -> bool {
             .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
 }
 
+/// Parse a `library:{job_id}` / `library:{job_id}#{n}` chain reference — the
+/// first-class way for clients (native UI, MCP agents, chained edits) to feed a
+/// node-library asset back into generation without downloading + re-encoding it
+/// as a data URL. Returns `(job_id, asset_index)`; None when it isn't a library
+/// ref at all OR the id/index is malformed (an unsafe id never resolves).
+pub fn parse_library_ref(s: &str) -> Option<(String, u32)> {
+    let rest = s.trim().strip_prefix("library:")?;
+    let (id, idx) = match rest.split_once('#') {
+        Some((id, n)) => (id, n.parse::<u32>().ok()?),
+        None => (rest, 0),
+    };
+    if !is_safe_asset_id(id) {
+        return None;
+    }
+    Some((id.to_string(), idx))
+}
+
+/// Media extensions the library serves / resolves, preference-ordered
+/// (video first — matches the historic first-file behavior; mov/mkv cover
+/// craft imports).
+const MEDIA_EXTS: &[&str] = &["mp4", "webm", "mov", "mkv", "png", "jpg", "jpeg", "webp"];
+
+/// Resolve the `index`-th media asset of a job under the library root
+/// (`YYYY/MM/DD/{job_id}/`). Index 0 keeps the historic first-file behavior
+/// (incl. the legacy `0.*` names); higher indices address `{index:02}.*` so an
+/// n>1 image batch is fully reachable. Traversal-guarded by `is_safe_asset_id`.
+pub fn resolve_job_asset(library_root: &Path, job_id: &str, index: u32) -> Option<PathBuf> {
+    if !is_safe_asset_id(job_id) {
+        return None;
+    }
+    if !library_root.is_dir() {
+        return None;
+    }
+    for year in std::fs::read_dir(library_root).ok()? {
+        let year = year.ok()?.path();
+        if !year.is_dir() {
+            continue;
+        }
+        for month in std::fs::read_dir(&year).ok()? {
+            let month = month.ok()?.path();
+            for day in std::fs::read_dir(&month).ok()? {
+                let day = day.ok()?.path();
+                let job_dir = day.join(job_id);
+                if !job_dir.is_dir() {
+                    continue;
+                }
+                // Exact names first: NN.ext (+ the legacy 0.* forms at index 0).
+                for ext in MEDIA_EXTS {
+                    let p = job_dir.join(format!("{index:02}.{ext}"));
+                    if p.is_file() {
+                        return Some(p);
+                    }
+                }
+                if index == 0 {
+                    for name in ["0.mp4", "0.png"] {
+                        let p = job_dir.join(name);
+                        if p.is_file() {
+                            return Some(p);
+                        }
+                    }
+                }
+                // Fallback: the index-th media file in name order (imports with
+                // arbitrary names stay addressable).
+                let mut media: Vec<PathBuf> = std::fs::read_dir(&job_dir)
+                    .ok()?
+                    .flatten()
+                    .map(|e| e.path())
+                    .filter(|p| {
+                        p.is_file()
+                            && p.extension()
+                                .and_then(|e| e.to_str())
+                                .map(|e| MEDIA_EXTS.contains(&e.to_ascii_lowercase().as_str()))
+                                .unwrap_or(false)
+                    })
+                    .collect();
+                media.sort();
+                return media.into_iter().nth(index as usize);
+            }
+        }
+    }
+    None
+}
+
+/// Build a MediaRef from a NODE-SIDE input: `library:{job_id}[#n]` resolves to
+/// the asset's local path (validated + confined by `resolve_job_asset`), and
+/// everything else passes through the strict remote gate (`from_remote_input` —
+/// bare filesystem paths stay rejected). This is what the HTTP routes and the
+/// MCP local backend call: the ONLY way a remote-supplied string becomes a
+/// `MediaRef::Path` is via a validated library id.
+pub fn media_from_node_input(s: &str, library_root: &Path) -> Result<MediaRef> {
+    if let Some((job_id, idx)) = parse_library_ref(s) {
+        let path = resolve_job_asset(library_root, &job_id, idx).ok_or_else(|| {
+            Error::other(format!(
+                "library asset not found: {job_id}#{idx} (is the job id right, and does it have media?)"
+            ))
+        })?;
+        return Ok(MediaRef::Path {
+            path: path.to_string_lossy().into_owned(),
+        });
+    }
+    MediaRef::from_remote_input(s)
+}
+
+/// CLI-side variant: `library:` refs resolve exactly like the node input, and
+/// anything else keeps the permissive local behavior (bare paths allowed —
+/// `from_user_input` is the local CLI's privilege).
+pub fn media_from_local_input(s: &str, library_root: &Path) -> MediaRef {
+    if let Some((job_id, idx)) = parse_library_ref(s) {
+        if let Some(path) = resolve_job_asset(library_root, &job_id, idx) {
+            return MediaRef::Path {
+                path: path.to_string_lossy().into_owned(),
+            };
+        }
+    }
+    MediaRef::from_user_input(s)
+}
+
 fn extension_from_name(name: &str) -> Option<String> {
     Path::new(name)
         .extension()
@@ -217,5 +334,63 @@ mod tests {
         assert!(!is_safe_asset_id("..%2f..%2fetc"));
         assert!(!is_safe_asset_id("a\\b"));
         assert!(!is_safe_asset_id(&"x".repeat(65)));
+    }
+
+    #[test]
+    fn library_ref_parses_and_guards() {
+        assert_eq!(
+            parse_library_ref("library:01ABC"),
+            Some(("01ABC".into(), 0))
+        );
+        assert_eq!(
+            parse_library_ref(" library:01ABC#2 "),
+            Some(("01ABC".into(), 2))
+        );
+        // Not a library ref → None (falls through to the normal gates).
+        assert_eq!(parse_library_ref("https://x/y.png"), None);
+        assert_eq!(parse_library_ref("/etc/shadow"), None);
+        // Traversal / malformed forms never resolve.
+        assert_eq!(parse_library_ref("library:../etc"), None);
+        assert_eq!(parse_library_ref("library:a/b"), None);
+        assert_eq!(parse_library_ref("library:01ABC#x"), None);
+        assert_eq!(parse_library_ref("library:"), None);
+    }
+
+    #[test]
+    fn resolve_job_asset_addresses_batches() {
+        let dir = tempfile::tempdir().unwrap();
+        let job = dir.path().join("2026").join("07").join("29").join("01JOB");
+        std::fs::create_dir_all(&job).unwrap();
+        std::fs::write(job.join("00.png"), b"a").unwrap();
+        std::fs::write(job.join("01.png"), b"b").unwrap();
+        std::fs::write(job.join("meta.json"), b"{}").unwrap();
+
+        let p0 = resolve_job_asset(dir.path(), "01JOB", 0).unwrap();
+        let p1 = resolve_job_asset(dir.path(), "01JOB", 1).unwrap();
+        assert!(p0.ends_with("00.png"));
+        assert!(p1.ends_with("01.png"));
+        // Out-of-range index and unknown job → None; meta.json never resolves.
+        assert!(resolve_job_asset(dir.path(), "01JOB", 5).is_none());
+        assert!(resolve_job_asset(dir.path(), "NOPE", 0).is_none());
+        assert!(resolve_job_asset(dir.path(), "../01JOB", 0).is_none());
+    }
+
+    #[test]
+    fn media_from_node_input_resolves_library_and_keeps_the_gate() {
+        let dir = tempfile::tempdir().unwrap();
+        let job = dir.path().join("2026").join("07").join("29").join("01JOB");
+        std::fs::create_dir_all(&job).unwrap();
+        std::fs::write(job.join("00.png"), b"a").unwrap();
+
+        // library ref → Path, pointing inside the library tree.
+        match media_from_node_input("library:01JOB", dir.path()).unwrap() {
+            MediaRef::Path { path } => assert!(path.ends_with("00.png")),
+            other => panic!("expected Path, got {other:?}"),
+        }
+        // Unknown job → a clear error, not a silent pass-through.
+        assert!(media_from_node_input("library:GHOST", dir.path()).is_err());
+        // The remote gate is unchanged: bare paths still rejected, URLs still pass.
+        assert!(media_from_node_input("/etc/shadow", dir.path()).is_err());
+        assert!(media_from_node_input("https://x/y.png", dir.path()).is_ok());
     }
 }

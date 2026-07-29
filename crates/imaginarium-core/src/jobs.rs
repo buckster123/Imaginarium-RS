@@ -105,13 +105,21 @@ impl JobStore {
         let conn = self.conn.lock().map_err(|e| Error::Db(e.to_string()))?;
         let mut stmt = conn.prepare(
             r#"
-            SELECT job_id, status, mode, model, created_at, error
+            SELECT job_id, status, mode, model, created_at, error, prompt, result_json
             FROM jobs
             ORDER BY created_at DESC
             LIMIT ?1
             "#,
         )?;
         let rows = stmt.query_map(params![limit as i64], |row| {
+            // Gallery projection: prompt + asset count ride along so list
+            // consumers (jobs rails, galleries) stop needing N+1 detail GETs.
+            let result_json: Option<String> = row.get(7)?;
+            let assets = result_json
+                .as_deref()
+                .and_then(|j| serde_json::from_str::<serde_json::Value>(j).ok())
+                .and_then(|v| v.get("assets").and_then(|a| a.as_array().map(|a| a.len())))
+                .unwrap_or(0);
             Ok(JobListItem {
                 job_id: JobId(row.get(0)?),
                 status: row.get(1)?,
@@ -119,6 +127,8 @@ impl JobStore {
                 model: row.get(3)?,
                 created_at: row.get(4)?,
                 error: row.get(5)?,
+                prompt: row.get(6)?,
+                assets,
             })
         })?;
         let mut out = Vec::new();
@@ -137,6 +147,10 @@ pub struct JobListItem {
     pub model: String,
     pub created_at: String,
     pub error: Option<String>,
+    /// The job's prompt (None for imports) — additive; old clients ignore it.
+    pub prompt: Option<String>,
+    /// Media assets on the job (0 when unknown) — `?i=` addresses each.
+    pub assets: usize,
 }
 
 /// Helper to stamp a running job skeleton.
