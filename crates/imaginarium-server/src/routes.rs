@@ -11,6 +11,7 @@ use imaginarium_core::client::{
 };
 use imaginarium_core::estimate;
 use imaginarium_core::jobs::JobStore;
+use imaginarium_core::library::media_from_node_input;
 use imaginarium_core::models::{parse_model_selector, ModelId};
 use imaginarium_core::tokens::TokenScope;
 use imaginarium_core::types::{JobId, JobStatus, MediaRef};
@@ -136,10 +137,11 @@ async fn image_edit(State(state): State<AppState>, Json(body): Json<ImageEditBod
         Ok(m) => m.unwrap_or(ModelId::Image),
         Err(e) => return err_response(StatusCode::BAD_REQUEST, e),
     };
+    let lib_root = state.cfg.library_dir();
     let refs: Vec<MediaRef> = match body
         .images
         .iter()
-        .map(|s| MediaRef::from_remote_input(s))
+        .map(|s| media_from_node_input(s, &lib_root))
         .collect::<std::result::Result<Vec<_>, _>>()
     {
         Ok(r) => r,
@@ -191,11 +193,12 @@ async fn video_gen(State(state): State<AppState>, Json(body): Json<VideoGenBody>
     };
     // "auto" / absent -> None -> auto-select by modality (not user-forced).
     let explicit = model.is_some();
+    let lib_root = state.cfg.library_dir();
     let refs = match body
         .reference_images
         .unwrap_or_default()
         .iter()
-        .map(|s| MediaRef::from_remote_input(s))
+        .map(|s| media_from_node_input(s, &lib_root))
         .collect::<std::result::Result<Vec<_>, _>>()
     {
         Ok(r) => r,
@@ -204,7 +207,7 @@ async fn video_gen(State(state): State<AppState>, Json(body): Json<VideoGenBody>
     let image = match body
         .image
         .as_deref()
-        .map(MediaRef::from_remote_input)
+        .map(|s| media_from_node_input(s, &lib_root))
         .transpose()
     {
         Ok(v) => v,
@@ -258,7 +261,7 @@ async fn video_edit(State(state): State<AppState>, Json(body): Json<VideoEditBod
         Ok(j) => j,
         Err(e) => return err_response(StatusCode::INTERNAL_SERVER_ERROR, e),
     };
-    let video = match MediaRef::from_remote_input(&body.video) {
+    let video = match media_from_node_input(&body.video, &state.cfg.library_dir()) {
         Ok(v) => v,
         Err(e) => return err_response(StatusCode::BAD_REQUEST, e),
     };
@@ -305,7 +308,7 @@ async fn video_extend(
         Ok(j) => j,
         Err(e) => return err_response(StatusCode::INTERNAL_SERVER_ERROR, e),
     };
-    let video = match MediaRef::from_remote_input(&body.video) {
+    let video = match media_from_node_input(&body.video, &state.cfg.library_dir()) {
         Ok(v) => v,
         Err(e) => return err_response(StatusCode::BAD_REQUEST, e),
     };
@@ -395,13 +398,24 @@ async fn jobs_wait(State(state): State<AppState>, Path(id): Path<String>) -> Res
     }
 }
 
-async fn library_content(State(state): State<AppState>, Path(id): Path<String>) -> Response {
+#[derive(Debug, Deserialize)]
+struct ContentQuery {
+    /// Asset index within the job (n>1 image batches) — default 0, the
+    /// historic first-file behavior.
+    i: Option<u32>,
+}
+
+async fn library_content(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Query(q): Query<ContentQuery>,
+) -> Response {
     // id is a job/asset id; reject anything that could traverse the library root.
     if !imaginarium_core::library::is_safe_asset_id(&id) {
         return err_response(StatusCode::BAD_REQUEST, "invalid asset id");
     }
     let root = state.cfg.library_dir();
-    match job_content_path(&root, &id) {
+    match job_content_path(&root, &id, q.i.unwrap_or(0)) {
         Some(path) => match tokio::fs::read(&path).await {
             Ok(bytes) => {
                 let ct = match path.extension().and_then(|e| e.to_str()) {

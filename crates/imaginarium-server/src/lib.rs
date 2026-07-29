@@ -5,7 +5,7 @@ mod routes;
 mod static_files;
 
 use std::net::SocketAddr;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use anyhow::{bail, Context, Result};
@@ -131,44 +131,10 @@ pub async fn serve_from_config(
     .await
 }
 
-/// Resolve content file path for a job asset (best-effort first media file).
-pub fn job_content_path(library_root: &PathBuf, job_id: &str) -> Option<PathBuf> {
-    // Defense in depth: never join an unsafe id onto the filesystem (path traversal).
-    if !imaginarium_core::library::is_safe_asset_id(job_id) {
-        return None;
-    }
-    let root = library_root;
-    if !root.is_dir() {
-        return None;
-    }
-    for year in std::fs::read_dir(root).ok()? {
-        let year = year.ok()?.path();
-        for month in std::fs::read_dir(&year).ok()? {
-            let month = month.ok()?.path();
-            for day in std::fs::read_dir(&month).ok()? {
-                let day = day.ok()?.path();
-                let job_dir = day.join(job_id);
-                if job_dir.is_dir() {
-                    for name in ["00.mp4", "00.png", "0.mp4", "0.png"] {
-                        let p = job_dir.join(name);
-                        if p.is_file() {
-                            return Some(p);
-                        }
-                    }
-                    if let Ok(rd) = std::fs::read_dir(&job_dir) {
-                        for e in rd.flatten() {
-                            let p = e.path();
-                            if p.is_file() {
-                                let ext = p.extension().and_then(|e| e.to_str()).unwrap_or("");
-                                if matches!(ext, "png" | "jpg" | "jpeg" | "webp" | "mp4" | "webm") {
-                                    return Some(p);
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-    None
+/// Resolve the `index`-th content file for a job (index 0 = the historic
+/// first-media-file behavior). Delegates to the library's traversal-guarded
+/// resolver so the content route, craft renders, and `library:` MediaRefs all
+/// share one walk.
+pub fn job_content_path(library_root: &Path, job_id: &str, index: u32) -> Option<PathBuf> {
+    imaginarium_core::library::resolve_job_asset(library_root, job_id, index)
 }

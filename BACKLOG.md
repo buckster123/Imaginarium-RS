@@ -101,4 +101,30 @@ Full detail + fixes in `SECURITY.md`. Checklist:
 
 ---
 
+## Studio arc (2026-07-29 →) — upstream slices for the ApexOS native studio
+
+Charter + full slice ledger live in ApexOS-RS `docs/imagine-studio.md`; the
+upstream (this repo) slices, in order:
+
+- [x] **U1 — client ergonomics**: `library:{job_id}[#n]` MediaRef (node-side
+      resolution, kills the download→base64 chain round-trip), `?i=` multi-asset
+      addressing on `/v1/library/{id}/content` (n>1 batches fully reachable),
+      jobs-list projection carrying `prompt` + `assets` count.
+- [ ] **U2a — craft engine correctness** (cutting-room port, part 1): per-segment
+      normalize filter → concat (fixes mixed-source `-c copy` breakage),
+      master-clock single audio pass + a **music-bed audio track**
+      (`AssetKind::Audio` + library audio sniff/mime/import/content-type),
+      segment-owned captions (makes the lost-overlay-after-clip-0 bug
+      unrepresentable), ffprobe durations (kills the 6.0s fallback), `-nostdin`
+      + even-dimension pitfalls as tests.
+- [ ] **U2b — craft engine expressiveness** (part 2): versioned merged timeline
+      contract (style block, segment kinds clip/still+Ken-Burns/card, speed,
+      letterbox recipes), two-pass loudnorm ship pass, content-hash segment
+      caching, provenance field.
+- [ ] **U3 — thumbnails/posters** (`thumb.jpg` on completion + `/v1/library/{id}/thumb`)
+      + **async craft render** (job id immediately, poll like any job).
+- [ ] Web studio adoption pass: `assetSrc` uses `?i=` (fixes the n>1
+      duplicate-image render), chain loads switch to `library:` refs (drops the
+      blob→dataURL round-trip), JobBoard shows the projected prompt.
+
 _50-finding raw audit output archived out-of-repo; this backlog is the deduped/triaged view._

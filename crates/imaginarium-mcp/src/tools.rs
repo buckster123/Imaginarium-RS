@@ -40,7 +40,7 @@ pub fn all_tool_schemas() -> Vec<Value> {
         ),
         tool(
             "imaginarium_image_edit",
-            "Edit 1–3 source images with a text prompt. images: paths, URLs, or file_ids.",
+            "Edit 1–3 source images with a text prompt. images: library:{job_id} refs (chain a previous generation — preferred, never expires), URLs, data: URLs, or file_ids. library:{job_id}#2 addresses the n-th image of a batch.",
             json!({
                 "type": "object",
                 "properties": {
@@ -56,12 +56,12 @@ pub fn all_tool_schemas() -> Vec<Value> {
         ),
         tool(
             "imaginarium_video_generate",
-            "Generate video: text-to-video (prompt only), image-to-video (image=), or reference-to-video (reference_images=). Do not combine image + reference_images. Defaults wait until done; set no_wait=true then use job_status/job_wait. I2V auto-selects video-1.5 (1080p ok).",
+            "Generate video: text-to-video (prompt only), image-to-video (image=), or reference-to-video (reference_images=). For I2V from a previous generation pass image=library:{job_id} (preferred — resolves on the node, never expires; upstream URLs do). Do not combine image + reference_images. Defaults wait until done; set no_wait=true then use job_status/job_wait. I2V auto-selects video-1.5 (1080p ok).",
             json!({
                 "type": "object",
                 "properties": {
                     "prompt": { "type": "string" },
-                    "image": { "type": "string", "description": "Start-frame path/URL for I2V" },
+                    "image": { "type": "string", "description": "Start frame for I2V: library:{job_id}, URL, data: URL, or file_id" },
                     "reference_images": { "type": "array", "items": { "type": "string" } },
                     "model": { "type": "string" },
                     "duration": { "type": "integer", "minimum": 1, "maximum": 15 },
@@ -73,7 +73,7 @@ pub fn all_tool_schemas() -> Vec<Value> {
         ),
         tool(
             "imaginarium_video_edit",
-            "Edit an existing video with a text prompt. video: path, URL, or file_id.",
+            "Edit an existing video with a text prompt. video: library:{job_id} (chain a previous video — preferred), URL, data: URL, or file_id.",
             json!({
                 "type": "object",
                 "properties": {
@@ -87,7 +87,7 @@ pub fn all_tool_schemas() -> Vec<Value> {
         ),
         tool(
             "imaginarium_video_extend",
-            "Extend video from last frame. duration is extension segment only (2–10s, default 6).",
+            "Extend video from last frame. video: library:{job_id} (chain a previous video — preferred), URL, or file_id. duration is extension segment only (2–10s, default 6).",
             json!({
                 "type": "object",
                 "properties": {

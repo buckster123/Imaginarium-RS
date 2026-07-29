@@ -246,7 +246,8 @@ impl MediaRef {
         } else {
             Err(Error::forbidden(format!(
                 "local filesystem paths are not accepted from remote callers; \
-                 use a data: URL, an http(s) URL, or an xAI file_… id (got: {})",
+                 use library:{{job_id}} for a node-library asset, a data: URL, \
+                 an http(s) URL, or an xAI file_… id (got: {})",
                 t.chars().take(40).collect::<String>()
             )))
         }
