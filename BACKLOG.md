@@ -123,6 +123,9 @@ upstream (this repo) slices, in order:
       caching, provenance field.
 - [x] **U3 — thumbnails/posters** (`thumb.jpg` on completion + `/v1/library/{id}/thumb`)
       + **async craft render** (job id immediately, poll like any job).
+- [x] **A7 enabler — MCP craft tool**: `imaginarium_craft_video` (timeline v1 →
+      render; wait=false default returns a pending job, poll `job_status`) in
+      BOTH backends — the agent-facing cutting room.
 - [ ] Web studio adoption pass: `assetSrc` uses `?i=` (fixes the n>1
       duplicate-image render), chain loads switch to `library:` refs (drops the
       blob→dataURL round-trip), JobBoard shows the projected prompt.

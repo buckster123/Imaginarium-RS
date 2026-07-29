@@ -84,6 +84,7 @@ async fn route(name: &str, args: &Value, backend: Arc<dyn Backend>) -> anyhow::R
         "imaginarium_video_generate" => backend.video_generate(args).await,
         "imaginarium_video_edit" => backend.video_edit(args).await,
         "imaginarium_video_extend" => backend.video_extend(args).await,
+        "imaginarium_craft_video" => backend.craft_video(args).await,
         "imaginarium_job_status" => {
             let job_id = args["job_id"]
                 .as_str()

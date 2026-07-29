@@ -35,6 +35,8 @@ pub trait Backend: Send + Sync {
     async fn job_status(&self, job_id: &str) -> Result<Value>;
     async fn job_wait(&self, job_id: &str) -> Result<Value>;
     async fn jobs_list(&self, limit: usize) -> Result<Value>;
+    /// Render a craft timeline (contract v1) into a library job.
+    async fn craft_video(&self, args: &Value) -> Result<Value>;
 }
 
 pub struct LocalBackend {
@@ -298,6 +300,66 @@ impl Backend for LocalBackend {
         let list = jobs.list_recent(limit).map_err(|e| anyhow!(e))?;
         Ok(serde_json::to_value(list)?)
     }
+
+    async fn craft_video(&self, args: &Value) -> Result<Value> {
+        let timeline: imaginarium_core::craft_video::VideoTimeline = serde_json::from_value(
+            args.get("timeline")
+                .cloned()
+                .ok_or_else(|| anyhow!("timeline required (VideoTimeline v1 object)"))?,
+        )
+        .map_err(|e| anyhow!("timeline parse: {e}"))?;
+        let wait = args["wait"].as_bool().unwrap_or(false);
+        let jobs = self.jobs()?;
+        let library = self.library.clone();
+        let root = self.cfg.library_dir();
+        if wait {
+            // Blocking render on this tool call (the MCP loop is serial —
+            // callers wanting concurrency use wait=false + job_status).
+            let r = tokio::task::spawn_blocking(move || {
+                imaginarium_core::craft_video::render_timeline(
+                    &library, &jobs, &root, &timeline, None,
+                )
+            })
+            .await
+            .map_err(|e| anyhow!("render task: {e}"))?
+            .map_err(|e| anyhow!(e))?;
+            return Ok(job_json(r));
+        }
+        // Async: pending row now, render in the background, finalize under the
+        // same id; every failure path flips the row to failed (never stuck).
+        let job_id = JobId::new();
+        let pending = JobResult::pending(
+            job_id.clone(),
+            imaginarium_core::types::JobMode::CraftExport,
+            "local-craft",
+            timeline.note.clone(),
+        );
+        jobs.upsert_result(&pending).map_err(|e| anyhow!(e))?;
+        let db_path = self.cfg.db_path();
+        let jid = job_id.clone();
+        std::thread::spawn(move || {
+            let rendered = imaginarium_core::craft_video::render_timeline(
+                &library,
+                &jobs,
+                &root,
+                &timeline,
+                Some(jid.clone()),
+            );
+            if let Err(e) = rendered {
+                if let Ok(store) = JobStore::open(&db_path) {
+                    let failed = JobResult::failure(
+                        jid,
+                        imaginarium_core::types::JobMode::CraftExport,
+                        "local-craft",
+                        "craft",
+                        e.to_string(),
+                    );
+                    let _ = store.upsert_result(&failed);
+                }
+            }
+        });
+        Ok(job_json(pending))
+    }
 }
 
 /// Thin HTTP client to a fat Imaginarium node (Phase 3 API).
@@ -408,5 +470,19 @@ impl Backend for ProxyBackend {
 
     async fn jobs_list(&self, limit: usize) -> Result<Value> {
         self.get(&format!("/v1/jobs?limit={limit}")).await
+    }
+
+    async fn craft_video(&self, args: &Value) -> Result<Value> {
+        let timeline = args
+            .get("timeline")
+            .cloned()
+            .ok_or_else(|| anyhow!("timeline required (VideoTimeline v1 object)"))?;
+        let wait = args["wait"].as_bool().unwrap_or(false);
+        let path = if wait {
+            "/v1/craft/video/render".to_string()
+        } else {
+            "/v1/craft/video/render?no_wait=true".to_string()
+        };
+        self.post(&path, timeline).await
     }
 }
