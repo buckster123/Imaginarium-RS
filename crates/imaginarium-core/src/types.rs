@@ -109,6 +109,8 @@ impl JobMode {
 pub enum AssetKind {
     Image,
     Video,
+    /// Imported audio (music beds, Sonus tracks) — never produced upstream.
+    Audio,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
