@@ -253,7 +253,7 @@ paths:
                 duration: { type: integer, description: "1-15s (clamped)" }
                 aspect_ratio: { type: string }
                 resolution: { type: string, enum: [480p, 720p, 1080p] }
-                no_wait: { type: boolean, description: "true = return after submit (poll with /v1/jobs/{id}/wait)" }
+                no_wait: { type: boolean, description: "true = return after submit (poll GET /v1/jobs/{id} or POST /v1/jobs/{id}/wait)" }
       responses:
         "200": { description: "JobResult (status may be pending/running when no_wait or on wait timeout)", content: { application/json: { schema: { $ref: '#/components/schemas/JobResult' } } } }
         "400": { description: Illegal mode/model/resolution combination }
@@ -311,6 +311,7 @@ paths:
   /v1/jobs/{job_id}:
     get:
       summary: Get a job by local ULID
+      description: "Returns the stored row. For a non-terminal video job with an upstream_request_id, this also polls xAI once (video_status_once) so no_wait generate + GET completes over HTTP and the MCP proxy. Craft/image jobs and terminal rows are returned as-is. A poll error returns the last known row rather than 502."
       parameters:
         - { name: job_id, in: path, required: true, schema: { type: string } }
       responses:

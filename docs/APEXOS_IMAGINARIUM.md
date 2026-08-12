@@ -113,6 +113,7 @@ Full route/param/auth reference: **`openapi/imaginarium-v1.yaml`** (regenerated 
 
 - **`model: "auto"`** — accepted on image/video/estimate (or omit `model`); selects the server default, and video auto-picks by modality (I2V→`video-1.5`, else `video`). Concrete model names still validate; unknown names 400.
 - **Tokens are not logged.** `?token=` is accepted for browser `<img>`/`<video>` sources; the request-log span records method + path only (never the query string).
+- **`GET /v1/jobs/{id}`** polls upstream once for a non-terminal video job (so `no_wait` + GET works over HTTP / MCP proxy). Terminal, image, and craft rows return as-is. A poll error returns the last known row.
 - **`POST /v1/jobs/{id}/wait`** returns the job as-is for already-terminal / synchronous (image) jobs, `404` for an unknown id, and `502` only on a genuine upstream error.
 - **Media fields** (`image`, `images[]`, `reference_images`, `video`) accept `library:{job_id}` (a node-library chain ref, resolved server-side — the **preferred** form for chaining a previous generation; `#n` addresses batch asset n), plus `data:` / `http(s):` / `file_…`. A bare local filesystem path is rejected (`400`); local paths work only via the CLI.
 - **Multi-asset batches**: `GET /v1/library/{id}/content?i=N` addresses the N-th asset of an n>1 image job (default 0). `GET /v1/jobs` rows carry `prompt` + `assets` (count) so galleries need no N+1 detail fetches.

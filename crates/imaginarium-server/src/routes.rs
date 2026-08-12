@@ -384,10 +384,38 @@ async fn jobs_get(State(state): State<AppState>, Path(id): Path<String>) -> Resp
         Ok(j) => j,
         Err(e) => return err_response(StatusCode::INTERNAL_SERVER_ERROR, e),
     };
-    match jobs.get(&JobId(id.clone())) {
-        Ok(Some(j)) => Json(j).into_response(),
-        Ok(None) => err_response(StatusCode::NOT_FOUND, format!("job not found: {id}")),
-        Err(e) => err_response(StatusCode::INTERNAL_SERVER_ERROR, e),
+    let job = match jobs.get(&JobId(id.clone())) {
+        Ok(Some(j)) => j,
+        Ok(None) => return err_response(StatusCode::NOT_FOUND, format!("job not found: {id}")),
+        Err(e) => return err_response(StatusCode::INTERNAL_SERVER_ERROR, e),
+    };
+    // Local MCP already polls via video_status_once. HTTP GET (and the MCP
+    // proxy that just GETs this route) used to return the stale DB row, so
+    // no_wait video never completed over the fat-node path.
+    let should_poll = job.upstream_request_id.is_some()
+        && matches!(
+            job.mode,
+            JobMode::VideoGenerate | JobMode::VideoEdit | JobMode::VideoExtend
+        )
+        && !matches!(
+            job.status,
+            JobStatus::Done | JobStatus::Failed | JobStatus::Expired | JobStatus::Cancelled
+        );
+    if !should_poll {
+        return Json(job).into_response();
+    }
+    match state
+        .client
+        .video_status_once(&job.job_id, &state.library, &jobs)
+        .await
+    {
+        Ok(j) => Json(j).into_response(),
+        Err(e) => {
+            // Keep the last known row — a transient poll error must not hide
+            // a job the caller already paid for.
+            tracing::warn!(job_id = %id, "jobs_get poll failed, returning last row: {e}");
+            Json(job).into_response()
+        }
     }
 }
 

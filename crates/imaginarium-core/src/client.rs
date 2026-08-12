@@ -214,6 +214,7 @@ impl ImagineClient {
         library: &Library,
         store: Option<&JobStore>,
     ) -> Result<JobResult> {
+        validate_image_quality(req.model, req.quality)?;
         let mut job = jobs::pending_job(
             JobMode::ImageGenerate,
             req.model.as_str(),
@@ -224,7 +225,6 @@ impl ImagineClient {
             s.upsert_result(&job)?;
         }
 
-        validate_image_quality(req.model, req.quality)?;
         let cost = estimate::estimate_image(req.model, req.n);
         let mut payload = json!({
             "model": req.model.as_str(),
@@ -259,19 +259,9 @@ impl ImagineClient {
 
         let url = format!("{}/images/generations", self.base_url);
         debug!(%url, "POST image generate");
-        let resp = self
-            .http
-            .post(&url)
-            .headers(self.auth_headers())
-            .json(&payload)
-            .send()
+        let body_text = self
+            .post_image_json(&url, &payload, job.clone(), store)
             .await?;
-
-        let status = resp.status();
-        let body_text = resp.text().await?;
-        if !status.is_success() {
-            return self.fail_job(job, store, status.as_u16(), body_text);
-        }
 
         let job = self
             .finalize_image_job(
@@ -328,7 +318,10 @@ impl ImagineClient {
         });
 
         if req.images.len() == 1 {
-            let field = self.media_ref_to_image_field(&req.images[0]).await?;
+            let field = match self.media_ref_to_image_field(&req.images[0]).await {
+                Ok(f) => f,
+                Err(e) => return self.fail_job_err(job, store, e),
+            };
             payload
                 .as_object_mut()
                 .unwrap()
@@ -336,7 +329,10 @@ impl ImagineClient {
         } else {
             let mut arr = Vec::new();
             for img in &req.images {
-                arr.push(self.media_ref_to_image_field(img).await?);
+                match self.media_ref_to_image_field(img).await {
+                    Ok(f) => arr.push(f),
+                    Err(e) => return self.fail_job_err(job, store, e),
+                }
             }
             payload
                 .as_object_mut()
@@ -370,18 +366,9 @@ impl ImagineClient {
         }
 
         let url = format!("{}/images/edits", self.base_url);
-        let resp = self
-            .http
-            .post(&url)
-            .headers(self.auth_headers())
-            .json(&payload)
-            .send()
+        let body_text = self
+            .post_image_json(&url, &payload, job.clone(), store)
             .await?;
-        let status = resp.status();
-        let body_text = resp.text().await?;
-        if !status.is_success() {
-            return self.fail_job(job, store, status.as_u16(), body_text);
-        }
 
         self.finalize_image_job(
             job,
@@ -961,9 +948,14 @@ impl ImagineClient {
             ));
         }
 
-        let job_dir = library.ensure_job_dir(&job.job_id)?;
+        let job_dir = match library.ensure_job_dir(&job.job_id) {
+            Ok(d) => d,
+            Err(e) => return self.fail_job_err(job, store, e),
+        };
         if let Some(p) = &job.prompt {
-            library.write_prompt(&job_dir, p)?;
+            if let Err(e) = library.write_prompt(&job_dir, p) {
+                return self.fail_job_err(job, store, e);
+            }
         }
 
         let download_url = public_url.clone().or_else(|| temporary_url.clone());
@@ -981,18 +973,27 @@ impl ImagineClient {
             }
         }
 
+        let content_url = local_path
+            .as_ref()
+            .map(|_| library::Library::content_url(&job.job_id, 0));
         let asset = Asset {
             id: AssetId::new(),
             kind: AssetKind::Video,
             local_path,
-            content_url: None,
+            content_url,
             upstream_url: temporary_url,
             file_id,
             public_url,
             mime_type: Some("video/mp4".into()),
         };
 
-        job.ok = true;
+        if self.auto_download && asset.local_path.is_none() {
+            job.ok = false;
+            job.error = Some("auto_download failed; asset kept as upstream url only".into());
+            job.error_type = Some("download".into());
+        } else {
+            job.ok = true;
+        }
         job.status = JobStatus::Done;
         job.assets = vec![asset];
         job.usage = Some(UsageInfo {
@@ -1048,7 +1049,7 @@ impl ImagineClient {
             let mut assets = Vec::new();
             for (i, item) in parsed.data.iter().enumerate() {
                 assets.push(
-                    self.materialize_image_asset(library, &job_dir, i, item)
+                    self.materialize_image_asset(&jid, &job_dir, i, item)
                         .await?,
                 );
             }
@@ -1062,7 +1063,14 @@ impl ImagineClient {
             Err(e) => return self.fail_job_err(job, store, e),
         };
 
-        job.ok = true;
+        let downloaded = assets.iter().any(|a| a.local_path.is_some());
+        if self.auto_download && !downloaded {
+            job.ok = false;
+            job.error = Some("auto_download failed; assets kept as upstream urls only".into());
+            job.error_type = Some("download".into());
+        } else {
+            job.ok = true;
+        }
         job.status = JobStatus::Done;
         job.assets = assets;
         job.usage = Some(UsageInfo {
@@ -1081,24 +1089,33 @@ impl ImagineClient {
 
     async fn materialize_image_asset(
         &self,
-        _library: &Library,
+        job_id: &JobId,
         job_dir: &Path,
         i: usize,
         item: &ImageApiItem,
     ) -> Result<Asset> {
         let asset_id = AssetId::new();
+        let dest = job_dir.join(format!("{:02}.png", i));
         let mut local_path = None;
         if self.auto_download {
             if let Some(url) = &item.url {
-                let dest = job_dir.join(format!("{:02}.png", i));
-                if library::download_url(&self.http, url, &dest).await.is_ok() {
-                    local_path = Some(dest.display().to_string());
+                match library::download_url(&self.http, url, &dest).await {
+                    Ok(_) => local_path = Some(dest.display().to_string()),
+                    Err(e) => tracing::warn!(
+                        job_id = %job_id,
+                        "image download failed for asset {i}: {e}"
+                    ),
                 }
             } else if let Some(b64) = &item.b64_json {
-                let dest = job_dir.join(format!("{:02}.png", i));
-                if let Ok(bytes) = base64::engine::general_purpose::STANDARD.decode(b64) {
-                    std::fs::write(&dest, bytes)?;
-                    local_path = Some(dest.display().to_string());
+                match base64::engine::general_purpose::STANDARD.decode(b64) {
+                    Ok(bytes) => {
+                        std::fs::write(&dest, bytes)?;
+                        local_path = Some(dest.display().to_string());
+                    }
+                    Err(e) => tracing::warn!(
+                        job_id = %job_id,
+                        "image b64 decode failed for asset {i}: {e}"
+                    ),
                 }
             }
         }
@@ -1106,13 +1123,56 @@ impl ImagineClient {
         Ok(Asset {
             id: asset_id,
             kind: AssetKind::Image,
+            content_url: local_path
+                .as_ref()
+                .map(|_| library::Library::content_url(job_id, i)),
             local_path,
-            content_url: None,
             upstream_url: item.url.clone(),
             file_id: file_output.and_then(|f| f.file_id.clone()),
             public_url: file_output.and_then(|f| f.public_url.clone()),
             mime_type: item.mime_type.clone(),
         })
+    }
+
+    /// POST an image payload. Transport / body-read failures mark the job Failed
+    /// so it is never left stranded in `running` with no upstream id.
+    async fn post_image_json(
+        &self,
+        url: &str,
+        payload: &Value,
+        job: JobResult,
+        store: Option<&JobStore>,
+    ) -> Result<String> {
+        let resp = match self
+            .http
+            .post(url)
+            .headers(self.auth_headers())
+            .json(payload)
+            .send()
+            .await
+        {
+            Ok(r) => r,
+            Err(e) => {
+                return self
+                    .fail_job_err(job, store, e.into())
+                    .map(|_| String::new());
+            }
+        };
+        let status = resp.status();
+        let body_text = match resp.text().await {
+            Ok(t) => t,
+            Err(e) => {
+                return self
+                    .fail_job_err(job, store, e.into())
+                    .map(|_| String::new());
+            }
+        };
+        if !status.is_success() {
+            return self
+                .fail_job(job, store, status.as_u16(), body_text)
+                .map(|_| String::new());
+        }
+        Ok(body_text)
     }
 
     fn fail_job(
@@ -1138,7 +1198,12 @@ impl ImagineClient {
         job.ok = false;
         job.status = JobStatus::Failed;
         job.error = Some(err.to_string());
-        job.error_type = Some("upstream".into());
+        job.error_type = Some(match &err {
+            Error::UpstreamTransport(_) => "transport".into(),
+            Error::InvalidMode(_) => "invalid_mode".into(),
+            Error::Serde(_) | Error::Other(_) => "parse".into(),
+            _ => "upstream".into(),
+        });
         job.completed_at = Some(Utc::now());
         if let Some(s) = store {
             let _ = s.upsert_result(&job);

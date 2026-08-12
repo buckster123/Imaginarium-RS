@@ -46,6 +46,15 @@ impl Library {
         Ok(path)
     }
 
+    /// Node-relative HTTP path for a job asset (`/v1/library/{id}/content`, `?i=` for n>0).
+    pub fn content_url(job_id: &JobId, index: usize) -> String {
+        if index == 0 {
+            format!("/v1/library/{}/content", job_id.as_str())
+        } else {
+            format!("/v1/library/{}/content?i={index}", job_id.as_str())
+        }
+    }
+
     /// Import raw bytes as a new completed library job (Studio+ craft / upload).
     /// `provenance` (when given) is stored under `meta.json`'s `provenance` key —
     /// craft renders record their full timeline + engine/tool versions there.
@@ -427,6 +436,16 @@ mod tests {
         assert_eq!(parse_library_ref("library:a/b"), None);
         assert_eq!(parse_library_ref("library:01ABC#x"), None);
         assert_eq!(parse_library_ref("library:"), None);
+    }
+
+    #[test]
+    fn content_url_indexes_batches() {
+        let id = JobId("01JOB".into());
+        assert_eq!(Library::content_url(&id, 0), "/v1/library/01JOB/content");
+        assert_eq!(
+            Library::content_url(&id, 2),
+            "/v1/library/01JOB/content?i=2"
+        );
     }
 
     #[test]
