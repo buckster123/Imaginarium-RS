@@ -499,6 +499,8 @@ Generate modes default to `video-1.5`. Edit/extend stay on `video`.
 Reject early with structured error:
 `{ ok:false, error_type:"invalid_mode", message:"1080p is not supported on reference-to-video (max 720p)" }`
 
+Images: `validate_image` rejects a video model, unknown AR, resolution other than `1k`/`2k`, `n` outside 1–10, `quality` off 2.0, and edit source-count vs `max_source_images`.
+
 ---
 
 ## 11. Security

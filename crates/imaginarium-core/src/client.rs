@@ -18,7 +18,7 @@ use crate::estimate;
 use crate::jobs::{self, JobStore};
 use crate::library::{self, Library};
 use crate::models::{
-    self, validate_image_quality, validate_video_generate, ImageQuality, ModelId, VideoMode,
+    self, validate_image, validate_video_generate, ImageQuality, ModelId, VideoMode,
 };
 use crate::rate_limit::RateLimiter;
 use crate::types::*;
@@ -264,7 +264,15 @@ impl ImagineClient {
         library: &Library,
         store: Option<&JobStore>,
     ) -> Result<JobResult> {
-        validate_image_quality(req.model, req.quality)?;
+        validate_image(
+            req.model,
+            false,
+            req.aspect_ratio.as_deref(),
+            req.resolution.as_deref(),
+            req.quality,
+            req.n,
+            0,
+        )?;
         let cost = estimate::estimate_image(req.model, req.n);
         self.check_rate()?;
         self.check_spend(store, cost.estimated_usd)?;
@@ -335,21 +343,15 @@ impl ImagineClient {
         library: &Library,
         store: Option<&JobStore>,
     ) -> Result<JobResult> {
-        if req.images.is_empty() {
-            return Err(Error::invalid_mode(
-                "image edit requires at least one image",
-            ));
-        }
-        let max_src = models::get(req.model)
-            .capabilities
-            .max_source_images
-            .unwrap_or(3);
-        if req.images.len() as u32 > max_src {
-            return Err(Error::invalid_mode(format!(
-                "image edit supports at most {max_src} source images"
-            )));
-        }
-        validate_image_quality(req.model, req.quality)?;
+        validate_image(
+            req.model,
+            true,
+            req.aspect_ratio.as_deref(),
+            req.resolution.as_deref(),
+            req.quality,
+            req.n,
+            req.images.len(),
+        )?;
         let cost = estimate::estimate_image(req.model, req.n);
         self.check_rate()?;
         self.check_spend(store, cost.estimated_usd)?;
