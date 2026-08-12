@@ -67,7 +67,7 @@ Track-it and rematch leftovers. Not blockers for LAN loopback.
 - [x] Image AR / resolution / `n` / model validated in `validate_image` (gen + edit). `models.rs`
 - [x] Jobs list `limit` capped at 100 (0 → 20) in `list_recent`. `jobs.rs`
 - [x] `auth_headers()` returns Config error on a control char in the API key (no panic). `client.rs`
-- [ ] `library_content` buffers the whole asset in RAM. `routes.rs`
+- [x] `library_content` streams the file (chunked + Content-Length). `routes.rs`
 - [ ] MCP `initialize` only on the first frame; re-init breaks the handshake. `mcp/lib.rs`
 - [ ] One invalid UTF-8 byte on stdin kills the MCP session. `mcp/transport.rs`
 - [ ] Oversized MCP frame answered with a null-id error. `mcp/transport.rs`

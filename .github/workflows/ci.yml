@@ -22,6 +22,6 @@ jobs:
       - name: clippy
         run: cargo clippy -p imaginarium-core -p imaginarium-cli -p imaginarium-mcp -p imaginarium-server -- -D warnings
       - name: test
-        run: cargo test -p imaginarium-core -p imaginarium-cli -p imaginarium-mcp
+        run: cargo test -p imaginarium-core -p imaginarium-cli -p imaginarium-mcp -p imaginarium-server
       - name: build
         run: cargo build -p imaginarium-cli
