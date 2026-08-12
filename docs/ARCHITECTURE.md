@@ -84,7 +84,9 @@ Auth: `Authorization: Bearer $XAI_API_KEY`
 - AR: 1:1, 16:9, 9:16, 4:3, 3:4, 3:2, 2:3
 - res: 480p | 720p | 1080p (1080p only video-1.5 T2V/I2V; R2V max 720p)
 - edit inherits input duration/AR/res (cap ~720p / ~8.7s)
-- poll statuses: `pending` | `done` | `failed` | `expired`
+- poll statuses: `pending` | `done` | `failed` | `expired` (timeout stays `running` + `error_type=timeout`)
+- `GET /v1/jobs/{id}` polls upstream once for a non-terminal video (so `no_wait` works over HTTP / MCP proxy)
+- assets: `content_url=/v1/library/{id}/content[?i=N]` only when a local file landed; `auto_download` miss is `Done` + `ok=false` + `error_type=download`
 - outputs: ephemeral URL; optional file_output when cloud profile on
 
 ### 2.4 Pricing ballpark (warn in UI/CLI)
@@ -504,11 +506,11 @@ Reject early with structured error:
 - Default listen: `127.0.0.1:8791`; LAN requires explicit `--bind 0.0.0.0:8791` (or interface IP)
 - Admin routes (token mint, upstream-key presence) need admin-scoped token
 - Upstream xAI key never returned by API
-- Path traversal guard on library
-- Rate limit per token (simple token bucket) to stop runaway agent loops
-- Optional max_usd_per_job / daily cap in config
-- Redact tokens in logs
-- CORS allowlist for browser UI origins (default same-host)
+- Path traversal guard on library (safe asset-id; remote callers cannot pass bare paths)
+- Optional spend caps in config (`[limits] max_usd_per_job`, `max_usd_per_day`; omit or `0` = off). Estimated USD is checked **before** the upstream POST. Daily sum is pending+running+done jobs.
+- Per-token rate limit (token bucket) is **not shipped** — queued; see `BACKLOG.md` Next. Spend caps are not a substitute for quota protection on intense cheap loops.
+- Redact tokens in logs (TraceLayer is method+path only)
+- CORS is not `Any` on `/v1/*`
 
 ---
 
@@ -578,7 +580,7 @@ Reject early with structured error:
 | Ephemeral URL expiry | local-first download always |
 | MCP timeouts | status/wait split; server-side jobs |
 | Mode/model illegal combos | core capability matrix |
-| Agent cost runaway | estimate tool + token rate limits + max duration config |
+| Agent cost runaway | estimate tool + optional `[limits]` USD caps; per-token rate limit queued (`BACKLOG.md`) |
 | Slint license vs MIT core | separate crate; LICENSE clarity before publish |
 | Huge base64 in LLM context | content_url only; never dump b64 in MCP results |
 | Edge node disk full | library LRU/quota config |
