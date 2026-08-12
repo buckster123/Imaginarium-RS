@@ -47,7 +47,7 @@ components:
         id: { type: string }
         kind: { type: string, enum: [image, video, audio], description: audio = imported tracks (music beds) — never produced upstream }
         local_path: { type: string, nullable: true, description: Node-local path (omitted for remote clients) }
-        content_url: { type: string, nullable: true, description: "Node-relative bytes path, e.g. /v1/library/{id}/content" }
+        content_url: { type: string, nullable: true, description: "Set only when the node stored the file. Node-relative path, e.g. /v1/library/{id}/content[?i=N]. Null on auto_download miss." }
         upstream_url: { type: string, nullable: true, description: Ephemeral xAI URL (may expire) }
         file_id: { type: string, nullable: true }
         public_url: { type: string, nullable: true }
@@ -70,7 +70,7 @@ components:
             estimated_usd: { type: number, nullable: true }
             upstream_ticks: { type: integer, nullable: true }
         error: { type: string, nullable: true }
-        error_type: { type: string, nullable: true, description: e.g. upstream, parse, timeout }
+        error_type: { type: string, nullable: true, description: "upstream | parse | timeout | download | spend_limit | invalid_mode" }
         created_at: { type: string, format: date-time }
         completed_at: { type: string, format: date-time, nullable: true }
         prompt: { type: string, nullable: true }
@@ -207,7 +207,7 @@ paths:
                 quality: { type: string, enum: [low, medium], description: "Image 2.0 only. Omitted → upstream default medium. Rejected on other image models." }
       responses:
         "200": { description: JobResult, content: { application/json: { schema: { $ref: '#/components/schemas/JobResult' } } } }
-        "400": { description: Invalid model/params (a bare local file path in a media field is rejected here) }
+        "400": { description: Invalid model/params (a bare local file path in a media field is rejected here) or spend cap ([limits]) }
         "502": { description: Upstream xAI error }
 
   /v1/images/edits:
@@ -258,7 +258,7 @@ paths:
                 no_wait: { type: boolean, description: "true = return after submit (poll GET /v1/jobs/{id} or POST /v1/jobs/{id}/wait)" }
       responses:
         "200": { description: "JobResult (status may be pending/running when no_wait or on wait timeout)", content: { application/json: { schema: { $ref: '#/components/schemas/JobResult' } } } }
-        "400": { description: Illegal mode/model/resolution combination }
+        "400": { description: Illegal mode/model/resolution combination, or spend cap ([limits]) }
         "502": { description: Upstream xAI error }
 
   /v1/videos/edits:

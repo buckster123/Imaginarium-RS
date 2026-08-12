@@ -1,6 +1,7 @@
 # Imaginarium-RS — Backlog
 
-**Rematch: 2026-08-12** (Grok audit swarm + slices a–d on `feat/mcp-craft-tool`).
+**Rematch: 2026-08-12** (Grok audit swarm + slices a–d on `feat/mcp-craft-tool`;
+docs pass 2 caught leftover ApexOS auto-pick / MCP tool-list / `content_url` lies).
 Original source: 2026-07-28 pre-integration audit (`SECURITY.md`). That file is the
 forensic write-up; **this file is the current ledger.** July checkboxes were stale —
 many items landed before this rematch. Do not treat an unchecked box below as

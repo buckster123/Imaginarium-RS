@@ -1,6 +1,6 @@
 # Imaginarium-RS — Architecture Plan (v3, defaults folded)
-Date: 2026-07-28
-Status: READY FOR READ-OVER — all product defaults locked; scaffold only after Andre signs off
+Date: 2026-07-28 (locked plan) · as-built rematch **2026-08-12**
+Status: **SHIPPED** as v0.1 local-first. This file is the original locked plan; §2 / §8–11 carry as-built notes. Live ledger: `BACKLOG.md`. Next queued: §11 per-token rate limit (spend caps already exist).
 Repo target: `~/Projects/Imaginarium-RS` (GH: `buckster123/Imaginarium-RS`)
 CLI bin: `imaginarium` only (no short alias in v1)
 
@@ -301,6 +301,7 @@ Imaginarium-RS/
 │   │   ├── library.rs                  # local asset store
 │   │   ├── jobs.rs                     # sqlite job records
 │   │   ├── estimate.rs                 # cost estimator
+│   │   ├── craft_video.rs              # local ffmpeg timeline (no upstream spend)
 │   │   └── config.rs
 │   ├── imaginarium-server/             # axum — API + static browser UI + SSE
 │   ├── imaginarium-mcp/                # stdio MCP (+ optional HTTP MCP feature)
@@ -371,7 +372,7 @@ imaginarium video gen -p "..."    # hits remote node, no local xAI key
 
 ## 8. HTTP API (node)
 
-Versioned under `/v1`. **`openapi/imaginarium-v1.yaml` is the shipped-route source of truth** (regenerated 2026-07-28). The sketch in §8.1 is the original design — some entries (SSE `/v1/jobs/{id}/events`, library list/get/delete/upload, `GET /v1/videos/{id}` poll, per-token rate limits) are **not yet implemented**; see the "Not in v1" note in `docs/APEXOS_IMAGINARIUM.md`.
+Versioned under `/v1`. **`openapi/imaginarium-v1.yaml` is the shipped-route source of truth** (rematched 2026-08-12). The sketch in §8.1 is the original design — some entries (SSE `/v1/jobs/{id}/events`, library list/get/delete/upload, `GET /v1/videos/{id}` poll, per-token rate limits) are **not yet implemented**; see the "Not in v1" note in `docs/APEXOS_IMAGINARIUM.md`.
 
 ### 8.1 Core
 
@@ -432,7 +433,7 @@ DELETE /v1/tokens/{id}
 
 Rules:
 - Never inline multi-MB base64 into JSON for agents
-- Always provide `content_url` on the node for LAN fetch
+- Set `content_url` **only when a local file landed** (`/v1/library/{job_id}/content[?i=N]`). Download miss → `Done` + `ok=false` + `error_type=download`, `content_url` null — caller can still try `upstream_url`
 - `local_path` only meaningful on the node filesystem (omit or null for remote clients)
 
 ---
@@ -445,16 +446,15 @@ Granular tools (better for LLMs than one mega-tool):
 |---|---|
 | `imaginarium_models` | capability matrix |
 | `imaginarium_estimate` | cost before spend |
-| `imaginarium_image_generate` | |
-| `imaginarium_image_edit` | 1–3 images |
-| `imaginarium_video_generate` | mode by fields present |
-| `imaginarium_video_edit` | |
-| `imaginarium_video_extend` | |
-| `imaginarium_job_status` | non-blocking |
-| `imaginarium_job_wait` | blocking w/ timeout |
-| `imaginarium_library_list` | |
-| `imaginarium_library_get` | metadata + content_url |
-| `imaginarium_download` | force pull to path (node-local) |
+| `imaginarium_image_generate` | aliases `image` / `quality` / `2.0`; optional `quality` on 2.0 |
+| `imaginarium_image_edit` | 1–3 images (`library:{job_id}` preferred) |
+| `imaginarium_video_generate` | T2V / I2V / R2V; default **1.5**; `reference_audios` / `voice_id` |
+| `imaginarium_video_edit` | legacy `video` model |
+| `imaginarium_video_extend` | legacy `video` model |
+| `imaginarium_craft_video` | local ffmpeg cut (no upstream spend) |
+| `imaginarium_job_status` | non-blocking; HTTP GET also polls pending video |
+| `imaginarium_job_wait` | blocking w/ timeout (`ping` / `tools/list` stay live) |
+| `imaginarium_jobs_list` | recent local jobs |
 
 Long video: agents should `generate` → poll `job_status` unless client timeout ≥ 600s.
 

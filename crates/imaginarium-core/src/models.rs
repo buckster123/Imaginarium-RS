@@ -442,7 +442,9 @@ pub fn validate_video_generate(
     Ok(())
 }
 
-/// Pick default video model from modality when user did not force a model.
+/// Default generate model when the caller omitted / passed `auto`.
+/// T2V, I2V, and R2V all pick Video 1.5. Edit/extend do not use this helper
+/// (they stay on legacy `Video` at their call sites).
 pub fn default_video_model_for(_mode: VideoMode) -> ModelId {
     ModelId::Video15
 }

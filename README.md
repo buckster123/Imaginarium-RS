@@ -127,7 +127,7 @@ docs/                  # architecture, multi-node, licensing, ApexOS embed
 `POST /v1/images/{generations,edits}` ·
 `POST /v1/videos/{generations,edits,extensions}` ·
 `GET /v1/jobs` · `GET /v1/jobs/{id}` (polls pending video) · `POST /v1/jobs/{id}/wait` ·
-`GET /v1/library/{id}/content` · `POST /v1/library/import` ·
+`GET /v1/library/{id}/content` · `GET /v1/library/{id}/thumb` · `POST /v1/library/import` ·
 `POST /v1/craft/video/render` · `GET|POST /v1/tokens` · `DELETE /v1/tokens/{id}`
 
 Auth on every `/v1/*` route (any one): `Authorization: Bearer <token>`,

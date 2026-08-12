@@ -90,7 +90,7 @@ args = ["mcp", "--proxy", "http://fat:8791"]
 | `imaginarium_job_wait` | block until done |
 | `imaginarium_jobs_list` | recent jobs |
 
-**Agent tip:** for long video, prefer `no_wait=true` then `imaginarium_job_status` / `imaginarium_job_wait`. `ping` / `tools/list` stay live during a wait. Results include `content_url` (`/v1/library/{id}/content[?i=N]`) when the node has the file — use that or `library:{job_id}`, never dump giant base64 into chat. Numeric/bool tool args must be real JSON numbers/bools, not strings.
+**Agent tip:** for long video, prefer `no_wait=true` then `imaginarium_job_status` / `imaginarium_job_wait`. `ping` / `tools/list` stay live during a wait. Results include `content_url` (`/v1/library/{id}/content[?i=N]`) when the node has the file — use that or `library:{job_id}`, never dump giant base64 into chat. Numeric/bool tool args must be real JSON numbers/bools, not strings. Optional `[limits]` spend caps return `error_type=spend_limit`; there is no per-token QPS throttle yet.
 
 ## Wire format
 
