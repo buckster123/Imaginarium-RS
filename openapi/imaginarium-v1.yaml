@@ -310,7 +310,7 @@ paths:
     get:
       summary: List recent jobs (summary rows)
       parameters:
-        - { name: limit, in: query, required: false, schema: { type: integer, default: 20 } }
+        - { name: limit, in: query, required: false, schema: { type: integer, default: 20, minimum: 1, maximum: 100 }, description: "Capped at 100. 0 or omit → 20." }
       responses:
         "200": { description: "Array of job summary rows: job_id, status, mode, model, created_at, error, prompt, assets (media count — address each via /content?i=N)" }
 

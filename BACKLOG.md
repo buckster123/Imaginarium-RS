@@ -65,7 +65,7 @@ Track-it and rematch leftovers. Not blockers for LAN loopback.
 - [x] `b64_json` persisted even when `auto_download` is off (bytes already in RAM). `client.rs`
 - [x] `video_extend` rejects duration outside 2–10 (no silent clamp). `models.rs`
 - [ ] Image AR / resolution / model not fully validated against the matrix. `models.rs`
-- [ ] Unbounded `?limit` on `/v1/jobs`. `jobs.rs`
+- [x] Jobs list `limit` capped at 100 (0 → 20) in `list_recent`. `jobs.rs`
 - [ ] `auth_headers()` panics on a control char in the API key. `client.rs`
 - [ ] `library_content` buffers the whole asset in RAM. `routes.rs`
 - [ ] MCP `initialize` only on the first frame; re-init breaks the handshake. `mcp/lib.rs`
