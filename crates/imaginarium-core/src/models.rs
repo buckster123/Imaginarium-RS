@@ -323,6 +323,98 @@ pub fn validate_image_quality(model: ModelId, quality: Option<ImageQuality>) -> 
     Ok(())
 }
 
+pub const IMAGE_N_MIN: u32 = 1;
+pub const IMAGE_N_MAX: u32 = 10;
+
+/// Validate an image generate (`edit=false`) or edit (`edit=true`) against the catalog.
+///
+/// Checks: image model + mode, aspect_ratio, resolution vs max, quality, `n` in 1–10,
+/// edit source count vs `max_source_images`. Omitted AR/res are fine (upstream default).
+pub fn validate_image(
+    model: ModelId,
+    edit: bool,
+    aspect_ratio: Option<&str>,
+    resolution: Option<&str>,
+    quality: Option<ImageQuality>,
+    n: u32,
+    source_count: usize,
+) -> Result<()> {
+    let info = get(model);
+    let caps = &info.capabilities;
+
+    if !model.is_image() {
+        return Err(Error::invalid_mode(format!(
+            "{} is not an image model",
+            model.as_str()
+        )));
+    }
+    if edit {
+        if !caps.image_edit {
+            return Err(Error::invalid_mode(format!(
+                "{} does not support image edit",
+                model.as_str()
+            )));
+        }
+        if source_count == 0 {
+            return Err(Error::invalid_mode(
+                "image edit requires at least one image",
+            ));
+        }
+        let max_src = caps.max_source_images.unwrap_or(3);
+        if source_count as u32 > max_src {
+            return Err(Error::invalid_mode(format!(
+                "image edit supports at most {max_src} source images"
+            )));
+        }
+    } else if !caps.text_to_image {
+        return Err(Error::invalid_mode(format!(
+            "{} does not support text-to-image",
+            model.as_str()
+        )));
+    }
+
+    if !(IMAGE_N_MIN..=IMAGE_N_MAX).contains(&n) {
+        return Err(Error::invalid_mode(format!(
+            "n must be {IMAGE_N_MIN}–{IMAGE_N_MAX} (got {n})"
+        )));
+    }
+
+    if let Some(ar) = aspect_ratio.map(str::trim).filter(|s| !s.is_empty()) {
+        if !IMAGE_ASPECT_RATIOS
+            .iter()
+            .any(|a| a.eq_ignore_ascii_case(ar))
+        {
+            return Err(Error::invalid_mode(format!(
+                "invalid image aspect_ratio: {ar}"
+            )));
+        }
+    }
+
+    if let Some(res) = resolution.map(str::trim).filter(|s| !s.is_empty()) {
+        let res_l = res.to_ascii_lowercase();
+        if !IMAGE_RESOLUTIONS.contains(&res_l.as_str()) {
+            return Err(Error::invalid_mode(format!(
+                "invalid image resolution: {res} (use 1k or 2k)"
+            )));
+        }
+        if let Some(max) = caps.max_image_resolution {
+            let rank = |r: &str| match r {
+                "1k" => 1,
+                "2k" => 2,
+                _ => 0,
+            };
+            if rank(&res_l) > rank(max) {
+                return Err(Error::invalid_mode(format!(
+                    "{} max resolution is {max}",
+                    model.as_str()
+                )));
+            }
+        }
+    }
+
+    validate_image_quality(model, quality)
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum VideoMode {
     TextToVideo,
@@ -616,6 +708,46 @@ mod tests {
             get(ModelId::Video15).capabilities.max_reference_audios,
             Some(3)
         );
+    }
+
+    #[test]
+    fn image_matrix_rejects_illegal_combos() {
+        assert!(validate_image(ModelId::Image, false, None, None, None, 1, 0).is_ok());
+        assert!(validate_image(
+            ModelId::Image20,
+            false,
+            Some("9:19.5"),
+            Some("2k"),
+            Some(ImageQuality::Low),
+            4,
+            0
+        )
+        .is_ok());
+        assert!(
+            validate_image(ModelId::Image, false, Some("16:9"), Some("1K"), None, 1, 0).is_ok()
+        );
+
+        assert!(
+            validate_image(ModelId::Video15, false, None, None, None, 1, 0).is_err(),
+            "video model is not an image model"
+        );
+        assert!(validate_image(ModelId::Image, false, Some("21:9"), None, None, 1, 0).is_err());
+        assert!(validate_image(ModelId::Image, false, None, Some("4k"), None, 1, 0).is_err());
+        assert!(validate_image(ModelId::Image, false, None, None, None, 0, 0).is_err());
+        assert!(validate_image(ModelId::Image, false, None, None, None, 11, 0).is_err());
+        assert!(validate_image(
+            ModelId::Image,
+            false,
+            None,
+            None,
+            Some(ImageQuality::Low),
+            1,
+            0
+        )
+        .is_err());
+        assert!(validate_image(ModelId::Image20, true, None, None, None, 1, 0).is_err());
+        assert!(validate_image(ModelId::Image20, true, None, None, None, 1, 4).is_err());
+        assert!(validate_image(ModelId::Image20, true, None, None, None, 1, 3).is_ok());
     }
 
     #[test]

@@ -13,8 +13,8 @@ use imaginarium_core::estimate;
 use imaginarium_core::jobs::JobStore;
 use imaginarium_core::library::media_from_node_input;
 use imaginarium_core::models::{
-    parse_model_selector, parse_optional_image_quality, parse_reference_audios,
-    validate_image_quality, ModelId,
+    parse_model_selector, parse_optional_image_quality, parse_reference_audios, validate_image,
+    ModelId,
 };
 use imaginarium_core::tokens::TokenScope;
 use imaginarium_core::types::{JobId, JobMode, JobResult, JobStatus, MediaRef};
@@ -125,7 +125,16 @@ async fn image_gen(State(state): State<AppState>, Json(body): Json<ImageGenBody>
         Ok(q) => q,
         Err(e) => return err_response(StatusCode::BAD_REQUEST, e),
     };
-    if let Err(e) = validate_image_quality(model, quality) {
+    let n = body.n.unwrap_or(1);
+    if let Err(e) = validate_image(
+        model,
+        false,
+        body.aspect_ratio.as_deref(),
+        body.resolution.as_deref(),
+        quality,
+        n,
+        0,
+    ) {
         return err_response(StatusCode::BAD_REQUEST, e);
     }
     let jobs = match JobStore::open(&state.cfg.db_path()) {
@@ -138,7 +147,7 @@ async fn image_gen(State(state): State<AppState>, Json(body): Json<ImageGenBody>
             ImageGenerateRequest {
                 prompt: body.prompt,
                 model,
-                n: body.n.unwrap_or(1),
+                n,
                 aspect_ratio: body.aspect_ratio,
                 resolution: body.resolution,
                 quality,
@@ -175,7 +184,16 @@ async fn image_edit(State(state): State<AppState>, Json(body): Json<ImageEditBod
         Ok(q) => q,
         Err(e) => return err_response(StatusCode::BAD_REQUEST, e),
     };
-    if let Err(e) = validate_image_quality(model, quality) {
+    let n = body.n.unwrap_or(1);
+    if let Err(e) = validate_image(
+        model,
+        true,
+        body.aspect_ratio.as_deref(),
+        body.resolution.as_deref(),
+        quality,
+        n,
+        body.images.len(),
+    ) {
         return err_response(StatusCode::BAD_REQUEST, e);
     }
     let lib_root = state.cfg.library_dir();
@@ -199,7 +217,7 @@ async fn image_edit(State(state): State<AppState>, Json(body): Json<ImageEditBod
                 prompt: body.prompt,
                 model,
                 images: refs,
-                n: body.n.unwrap_or(1),
+                n,
                 aspect_ratio: body.aspect_ratio,
                 resolution: body.resolution,
                 quality,

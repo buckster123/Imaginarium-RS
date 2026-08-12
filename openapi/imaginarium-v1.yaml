@@ -204,8 +204,8 @@ paths:
                 prompt: { type: string }
                 model: { type: string, description: "grok-imagine-image | grok-imagine-image-quality | grok-imagine-image-2.0 | aliases image/quality/2.0 | \"auto\" | omit" }
                 n: { type: integer }
-                aspect_ratio: { type: string }
-                resolution: { type: string, enum: ["1k", "2k"] }
+                aspect_ratio: { type: string, description: "1:1, 16:9, 9:16, 4:3, 3:4, 3:2, 2:3, 2:1, 1:2, 19.5:9, 9:19.5, 20:9, 9:20, auto. Unknown values 400." }
+                resolution: { type: string, enum: ["1k", "2k"], description: "Unknown values 400. All current image models allow 2k." }
                 quality: { type: string, enum: [low, medium], description: "Image 2.0 only. Omitted → upstream default medium. Rejected on other image models." }
       responses:
         "200": { description: JobResult, content: { application/json: { schema: { $ref: '#/components/schemas/JobResult' } } } }
