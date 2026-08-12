@@ -20,6 +20,7 @@ use crate::library::{self, Library};
 use crate::models::{
     self, validate_image_quality, validate_video_generate, ImageQuality, ModelId, VideoMode,
 };
+use crate::rate_limit::RateLimiter;
 use crate::types::*;
 
 const USER_AGENT_VALUE: &str = concat!("Imaginarium-RS/", env!("CARGO_PKG_VERSION"));
@@ -35,6 +36,9 @@ pub struct ImagineClient {
     pub(crate) poll_interval: Duration,
     pub(crate) poll_timeout: Duration,
     pub(crate) limits: crate::config::LimitsConfig,
+    /// In-process CLI / MCP bucket (`local`). `None` on the HTTP server
+    /// (per-token limiter lives in auth middleware).
+    pub(crate) local_rate: Option<RateLimiter>,
 }
 
 #[derive(Debug, Clone)]
@@ -127,7 +131,21 @@ impl ImagineClient {
             poll_interval: Duration::from_millis(cfg.poll.interval_ms.max(500)),
             poll_timeout: Duration::from_secs(cfg.poll.timeout_s.max(30)),
             limits: cfg.limits.clone(),
+            local_rate: RateLimiter::from_limits(&cfg.limits),
         })
+    }
+
+    /// Server process: LAN tokens are throttled in auth, not here.
+    pub fn without_local_rate(mut self) -> Self {
+        self.local_rate = None;
+        self
+    }
+
+    fn check_rate(&self) -> Result<()> {
+        if let Some(lim) = &self.local_rate {
+            lim.check("local")?;
+        }
+        Ok(())
     }
 
     fn check_spend(&self, store: Option<&JobStore>, this_job_usd: f64) -> Result<()> {
@@ -236,6 +254,7 @@ impl ImagineClient {
     ) -> Result<JobResult> {
         validate_image_quality(req.model, req.quality)?;
         let cost = estimate::estimate_image(req.model, req.n);
+        self.check_rate()?;
         self.check_spend(store, cost.estimated_usd)?;
         let mut job = jobs::pending_job(
             JobMode::ImageGenerate,
@@ -320,6 +339,7 @@ impl ImagineClient {
         }
         validate_image_quality(req.model, req.quality)?;
         let cost = estimate::estimate_image(req.model, req.n);
+        self.check_rate()?;
         self.check_spend(store, cost.estimated_usd)?;
 
         let mut job = jobs::pending_job(
@@ -482,6 +502,7 @@ impl ImagineClient {
 
         let duration = req.duration.unwrap_or(8).clamp(1, 15);
         let cost = estimate::estimate_video(model, duration);
+        self.check_rate()?;
         self.check_spend(store, cost.estimated_usd)?;
         let prompt = req.prompt.clone().unwrap_or_default();
         let mut job =
@@ -593,6 +614,7 @@ impl ImagineClient {
         }
         // Edit duration unknown; rough mid estimate 6s of base video model.
         let cost = estimate::estimate_video(model, 6);
+        self.check_rate()?;
         self.check_spend(store, cost.estimated_usd)?;
 
         let mut job =
@@ -656,6 +678,7 @@ impl ImagineClient {
         }
         let duration = req.duration.unwrap_or(6).clamp(2, 10);
         let cost = estimate::estimate_video(model, duration);
+        self.check_rate()?;
         self.check_spend(store, cost.estimated_usd)?;
 
         let mut job = jobs::pending_job(
@@ -1226,6 +1249,7 @@ impl ImagineClient {
         job.error_type = Some(match &err {
             Error::UpstreamTransport(_) => "transport".into(),
             Error::SpendLimit(_) => "spend_limit".into(),
+            Error::RateLimit { .. } => "rate_limit".into(),
             Error::InvalidMode(_) => "invalid_mode".into(),
             Error::Serde(_) | Error::Other(_) => "parse".into(),
             _ => "upstream".into(),

@@ -18,6 +18,9 @@ pub enum Error {
     #[error("spend limit: {0}")]
     SpendLimit(String),
 
+    #[error("rate limit: retry after {retry_after_s}s")]
+    RateLimit { retry_after_s: u64 },
+
     #[error("missing credential: {0}")]
     MissingCredential(String),
 
@@ -61,6 +64,12 @@ impl Error {
 
     pub fn spend_limit(msg: impl Into<String>) -> Self {
         Self::SpendLimit(msg.into())
+    }
+
+    pub fn rate_limit(retry_after_s: u64) -> Self {
+        Self::RateLimit {
+            retry_after_s: retry_after_s.max(1),
+        }
     }
 
     pub fn other(msg: impl Into<String>) -> Self {

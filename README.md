@@ -139,7 +139,8 @@ Auth on every `/v1/*` route (any one): `Authorization: Bearer <token>`,
 - Default bind is loopback `127.0.0.1:8791`. A non-loopback bind **refuses to start without a token**.
 - Tokens are stored as hashes; the plaintext is shown once at mint. The upstream xAI key is never returned by the API and never logged.
 - Media inputs from the network accept only `data:` / `http(s):` / `file_…` / `library:{job_id}` refs — bare local paths are the CLI's privilege alone.
-- Optional spend caps: `[limits] max_usd_per_job` / `max_usd_per_day` in config (omit or `0` = off). Per-token request throttling is not shipped yet.
+- Optional spend caps: `[limits] max_usd_per_job` / `max_usd_per_day` (omit or `0` = off).
+- Paid-request token bucket (default **30/min**, burst **10**) per minted token, node env token, and local CLI/MCP. Set `[limits] paid_rpm = 0` to disable. HTTP 429 + `Retry-After`. Polls and craft are not counted.
 
 See [`SECURITY.md`](SECURITY.md) for the trust model and [`BACKLOG.md`](BACKLOG.md) for the live ledger.
 
@@ -152,6 +153,7 @@ See [`SECURITY.md`](SECURITY.md) for the trust model and [`BACKLOG.md`](BACKLOG.
 | Upstream key | `XAI_API_KEY` (or `upstream.api_key` in config — discouraged) |
 | Node / mesh token | `IMAGINARIUM_TOKEN`, or `imaginarium token create` |
 | Spend caps | `[limits] max_usd_per_job` / `max_usd_per_day` (optional) |
+| Paid rate limit | `[limits] paid_rpm` (default 30) / `paid_burst` (default 10); `0` = off |
 
 ## Landing changes
 

@@ -6,7 +6,8 @@
 **Status after the 2026-08-12 rematch + slices a–d.** Gating items **G1–G4** and **S1–S2**
 are closed in current code: remote media gate, safe library ids, ConnectInfo loopback
 bypass, drawtext escaping + caption cap, no CORS `Any`, path-only traces. Optional
-`[limits]` spend caps exist. Per-token rate limiting does **not**. Treat this file as
+`[limits]` spend caps exist. Per-token paid-request rate limiting **does**
+(`paid_rpm` / `paid_burst`). Treat this file as
 the original finding text; treat BACKLOG as “is it still open?”.
 
 ---

@@ -64,6 +64,9 @@ fn err_response(status: StatusCode, msg: impl ToString) -> Response {
 fn client_err(e: imaginarium_core::Error) -> Response {
     use imaginarium_core::Error as E;
     let status = match e {
+        E::RateLimit { retry_after_s } => {
+            return crate::auth::rate_limit_response(retry_after_s);
+        }
         E::InvalidMode(_) | E::SpendLimit(_) => StatusCode::BAD_REQUEST,
         E::Forbidden(_) => StatusCode::FORBIDDEN,
         E::JobNotFound(_) => StatusCode::NOT_FOUND,

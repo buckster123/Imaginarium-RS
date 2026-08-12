@@ -9,6 +9,7 @@ pub mod jobs;
 pub mod library;
 pub mod models;
 pub mod paths;
+pub mod rate_limit;
 pub mod tokens;
 pub mod types;
 
@@ -18,6 +19,7 @@ pub use models::{
     catalog, default_video_model_for, parse_optional_image_quality, parse_reference_audios,
     validate_image_quality, validate_video_generate, ImageQuality, ModelId, ModelInfo, VideoMode,
 };
+pub use rate_limit::{is_paid_upstream, RateLimiter};
 pub use tokens::{
     extract_presented_token, is_loopback_bind, AuthIdentity, AuthSource, TokenMintResult,
     TokenRecord, TokenScope, TokenStore,
