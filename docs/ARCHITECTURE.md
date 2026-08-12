@@ -80,7 +80,7 @@ Auth: `Authorization: Bearer $XAI_API_KEY`
 - modes mutually exclusive: prompt-only | `image` | `reference_images` | edit `video` | extend `video`
 - **forbid** `image` + `reference_images` / `reference_audios`
 - `reference_audios`: up to 3 preset `voice_id`s on **video-1.5 R2V** (audio-only is valid)
-- duration 1–15s gen; extend segment 2–10s (default 6) **adds** to original length
+- duration 1–15s gen; extend segment 2–10s (default 6) **adds** to original length (out of range is rejected, not clamped)
 - AR: 1:1, 16:9, 9:16, 4:3, 3:4, 3:2, 2:3
 - res: 480p | 720p | 1080p (1080p only video-1.5 T2V/I2V; R2V max 720p)
 - edit inherits input duration/AR/res (cap ~720p / ~8.7s)

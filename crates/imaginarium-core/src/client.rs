@@ -689,7 +689,7 @@ impl ImagineClient {
                 model.as_str()
             )));
         }
-        let duration = req.duration.unwrap_or(6).clamp(2, 10);
+        let duration = models::parse_video_extend_duration(req.duration)?;
         let cost = estimate::estimate_video(model, duration, Some("720p"));
         self.check_rate()?;
         self.check_spend(store, cost.estimated_usd)?;

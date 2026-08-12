@@ -442,6 +442,21 @@ pub fn validate_video_generate(
     Ok(())
 }
 
+pub const VIDEO_EXTEND_MIN_S: u32 = 2;
+pub const VIDEO_EXTEND_MAX_S: u32 = 10;
+pub const VIDEO_EXTEND_DEFAULT_S: u32 = 6;
+
+/// Extend segment length. Omitted → 6s. Out of 2–10 is an error (not clamped).
+pub fn parse_video_extend_duration(duration: Option<u32>) -> Result<u32> {
+    match duration {
+        None => Ok(VIDEO_EXTEND_DEFAULT_S),
+        Some(d) if (VIDEO_EXTEND_MIN_S..=VIDEO_EXTEND_MAX_S).contains(&d) => Ok(d),
+        Some(d) => Err(Error::invalid_mode(format!(
+            "video extend duration must be {VIDEO_EXTEND_MIN_S}–{VIDEO_EXTEND_MAX_S}s (got {d})"
+        ))),
+    }
+}
+
 /// Default generate model when the caller omitted / passed `auto`.
 /// T2V, I2V, and R2V all pick Video 1.5. Edit/extend do not use this helper
 /// (they stay on legacy `Video` at their call sites).
@@ -530,6 +545,16 @@ mod tests {
             0
         )
         .is_err());
+    }
+
+    #[test]
+    fn extend_duration_rejects_out_of_range_instead_of_clamping() {
+        assert_eq!(parse_video_extend_duration(None).unwrap(), 6);
+        assert_eq!(parse_video_extend_duration(Some(2)).unwrap(), 2);
+        assert_eq!(parse_video_extend_duration(Some(10)).unwrap(), 10);
+        assert!(parse_video_extend_duration(Some(1)).is_err());
+        assert!(parse_video_extend_duration(Some(11)).is_err());
+        assert!(parse_video_extend_duration(Some(15)).is_err());
     }
 
     #[test]
