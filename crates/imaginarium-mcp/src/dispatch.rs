@@ -77,7 +77,8 @@ async fn route(name: &str, args: &Value, backend: Arc<dyn Backend>) -> anyhow::R
             let model = args["model"].as_str();
             let n = crate::args::u32_or(args, "n", 1)?;
             let duration = crate::args::u32_or(args, "duration", 8)?;
-            backend.estimate(kind, model, n, duration).await
+            let resolution = args["resolution"].as_str();
+            backend.estimate(kind, model, n, duration, resolution).await
         }
         "imaginarium_image_generate" => backend.image_generate(args).await,
         "imaginarium_image_edit" => backend.image_edit(args).await,

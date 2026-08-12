@@ -61,7 +61,7 @@ Provenance: **[confirmed]** traced to current code · **[swarm]** audit-verified
 
 Track-it and rematch leftovers. Not blockers for LAN loopback.
 
-- [ ] `estimate_video` ignores resolution → 1080p 1.5 under-quoted. `estimate.rs`
+- [x] `estimate_video` quotes by resolution (1.5: $0.08 / $0.14 / $0.25). `estimate.rs`
 - [ ] `b64_json` discarded unless `auto_download` is on. `client.rs`
 - [ ] `video_extend` silently clamps duration (2–10) instead of rejecting. `client.rs`
 - [ ] Image AR / resolution / model not fully validated against the matrix. `models.rs`
