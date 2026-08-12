@@ -25,6 +25,19 @@ use crate::types::*;
 
 const USER_AGENT_VALUE: &str = concat!("Imaginarium-RS/", env!("CARGO_PKG_VERSION"));
 
+/// Persist Imagine `b64_json` bytes. Always done when present — auto_download
+/// only gates fetching ephemeral URLs, not bytes we already hold.
+fn write_b64_image(dest: &Path, b64: &str) -> Result<()> {
+    let bytes = base64::engine::general_purpose::STANDARD
+        .decode(b64)
+        .map_err(|e| Error::other(format!("b64_json decode: {e}")))?;
+    if bytes.is_empty() {
+        return Err(Error::other("b64_json decoded to empty"));
+    }
+    std::fs::write(dest, bytes)?;
+    Ok(())
+}
+
 #[derive(Clone)]
 pub struct ImagineClient {
     pub(crate) http: Client,
@@ -1146,24 +1159,27 @@ impl ImagineClient {
         let asset_id = AssetId::new();
         let dest = job_dir.join(format!("{:02}.png", i));
         let mut local_path = None;
-        if self.auto_download {
+
+        // Inline bytes are already paid-for and in RAM. Persist them even when
+        // auto_download is off — that flag only skips fetching ephemeral URLs.
+        if let Some(b64) = &item.b64_json {
+            match write_b64_image(&dest, b64) {
+                Ok(()) => local_path = Some(dest.display().to_string()),
+                Err(e) if item.url.is_none() => return Err(e),
+                Err(e) => tracing::warn!(
+                    job_id = %job_id,
+                    "image b64 decode failed for asset {i} (will try url): {e}"
+                ),
+            }
+        }
+
+        if local_path.is_none() && self.auto_download {
             if let Some(url) = &item.url {
                 match library::download_url(&self.http, url, &dest).await {
                     Ok(_) => local_path = Some(dest.display().to_string()),
                     Err(e) => tracing::warn!(
                         job_id = %job_id,
                         "image download failed for asset {i}: {e}"
-                    ),
-                }
-            } else if let Some(b64) = &item.b64_json {
-                match base64::engine::general_purpose::STANDARD.decode(b64) {
-                    Ok(bytes) => {
-                        std::fs::write(&dest, bytes)?;
-                        local_path = Some(dest.display().to_string());
-                    }
-                    Err(e) => tracing::warn!(
-                        job_id = %job_id,
-                        "image b64 decode failed for asset {i}: {e}"
                     ),
                 }
             }
@@ -1315,4 +1331,79 @@ pub fn models_table_json() -> Value {
         "video_resolutions": models::VIDEO_RESOLUTIONS,
         "preset_voice_ids": models::PRESET_VOICE_IDS,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::tempdir;
+
+    fn dummy_client(auto_download: bool) -> ImagineClient {
+        ImagineClient {
+            http: Client::new(),
+            base_url: "http://127.0.0.1".into(),
+            api_key: "test".into(),
+            auto_download,
+            storage_profile: "local".into(),
+            storage_public_url: false,
+            poll_interval: Duration::from_secs(1),
+            poll_timeout: Duration::from_secs(30),
+            limits: crate::config::LimitsConfig::default(),
+            local_rate: None,
+        }
+    }
+
+    #[tokio::test]
+    async fn b64_json_is_written_when_auto_download_is_off() {
+        let dir = tempdir().unwrap();
+        let client = dummy_client(false);
+        let job_id = JobId::new();
+        // 1×1 PNG
+        let b64 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==";
+        let item = ImageApiItem {
+            url: None,
+            b64_json: Some(b64.into()),
+            mime_type: Some("image/png".into()),
+            file_output: None,
+        };
+        let asset = client
+            .materialize_image_asset(&job_id, dir.path(), 0, &item)
+            .await
+            .unwrap();
+        let path = asset.local_path.expect("b64 must land on disk");
+        assert!(std::path::Path::new(&path).is_file());
+        assert!(asset.content_url.is_some());
+        assert!(std::fs::metadata(&path).unwrap().len() > 0);
+    }
+
+    #[tokio::test]
+    async fn url_only_is_not_fetched_when_auto_download_is_off() {
+        let dir = tempdir().unwrap();
+        let client = dummy_client(false);
+        let job_id = JobId::new();
+        let item = ImageApiItem {
+            url: Some("https://imgen.example/ephemeral.png".into()),
+            b64_json: None,
+            mime_type: Some("image/png".into()),
+            file_output: None,
+        };
+        let asset = client
+            .materialize_image_asset(&job_id, dir.path(), 0, &item)
+            .await
+            .unwrap();
+        assert!(asset.local_path.is_none());
+        assert!(asset.content_url.is_none());
+        assert_eq!(
+            asset.upstream_url.as_deref(),
+            Some("https://imgen.example/ephemeral.png")
+        );
+    }
+
+    #[test]
+    fn write_b64_rejects_garbage() {
+        let dir = tempdir().unwrap();
+        let dest = dir.path().join("00.png");
+        assert!(write_b64_image(&dest, "%%%not-b64%%%").is_err());
+        assert!(!dest.exists());
+    }
 }

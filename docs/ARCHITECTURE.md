@@ -86,7 +86,7 @@ Auth: `Authorization: Bearer $XAI_API_KEY`
 - edit inherits input duration/AR/res (cap ~720p / ~8.7s)
 - poll statuses: `pending` | `done` | `failed` | `expired` (timeout stays `running` + `error_type=timeout`)
 - `GET /v1/jobs/{id}` polls upstream once for a non-terminal video (so `no_wait` works over HTTP / MCP proxy)
-- assets: `content_url=/v1/library/{id}/content[?i=N]` only when a local file landed; `auto_download` miss is `Done` + `ok=false` + `error_type=download`
+- assets: `content_url=/v1/library/{id}/content[?i=N]` only when a local file landed; `auto_download` miss is `Done` + `ok=false` + `error_type=download`. Inline `b64_json` is always written to disk (those bytes are already in RAM); `auto_download` only skips fetching ephemeral URLs.
 - outputs: ephemeral URL; optional file_output when cloud profile on
 
 ### 2.4 Pricing ballpark (warn in UI/CLI)
