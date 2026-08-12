@@ -34,6 +34,7 @@ pub struct ImagineClient {
     pub(crate) storage_public_url: bool,
     pub(crate) poll_interval: Duration,
     pub(crate) poll_timeout: Duration,
+    pub(crate) limits: crate::config::LimitsConfig,
 }
 
 #[derive(Debug, Clone)]
@@ -125,7 +126,26 @@ impl ImagineClient {
             storage_public_url: cfg.storage.public_url,
             poll_interval: Duration::from_millis(cfg.poll.interval_ms.max(500)),
             poll_timeout: Duration::from_secs(cfg.poll.timeout_s.max(30)),
+            limits: cfg.limits.clone(),
         })
+    }
+
+    fn check_spend(&self, store: Option<&JobStore>, this_job_usd: f64) -> Result<()> {
+        let spent_today = if self.limits.max_usd_per_day.is_some() {
+            if let Some(s) = store {
+                let start = Utc::now()
+                    .date_naive()
+                    .and_hms_opt(0, 0, 0)
+                    .map(|t| t.and_utc())
+                    .unwrap_or_else(Utc::now);
+                s.estimated_spend_since(start)?
+            } else {
+                0.0
+            }
+        } else {
+            0.0
+        };
+        self.limits.check(this_job_usd, spent_today)
     }
 
     pub(crate) fn auth_headers(&self) -> HeaderMap {
@@ -215,6 +235,8 @@ impl ImagineClient {
         store: Option<&JobStore>,
     ) -> Result<JobResult> {
         validate_image_quality(req.model, req.quality)?;
+        let cost = estimate::estimate_image(req.model, req.n);
+        self.check_spend(store, cost.estimated_usd)?;
         let mut job = jobs::pending_job(
             JobMode::ImageGenerate,
             req.model.as_str(),
@@ -225,7 +247,6 @@ impl ImagineClient {
             s.upsert_result(&job)?;
         }
 
-        let cost = estimate::estimate_image(req.model, req.n);
         let mut payload = json!({
             "model": req.model.as_str(),
             "prompt": req.prompt,
@@ -298,6 +319,8 @@ impl ImagineClient {
             )));
         }
         validate_image_quality(req.model, req.quality)?;
+        let cost = estimate::estimate_image(req.model, req.n);
+        self.check_spend(store, cost.estimated_usd)?;
 
         let mut job = jobs::pending_job(
             JobMode::ImageEdit,
@@ -309,7 +332,6 @@ impl ImagineClient {
             s.upsert_result(&job)?;
         }
 
-        let cost = estimate::estimate_image(req.model, req.n);
         let mut payload = json!({
             "model": req.model.as_str(),
             "prompt": req.prompt,
@@ -459,6 +481,8 @@ impl ImagineClient {
         )?;
 
         let duration = req.duration.unwrap_or(8).clamp(1, 15);
+        let cost = estimate::estimate_video(model, duration);
+        self.check_spend(store, cost.estimated_usd)?;
         let prompt = req.prompt.clone().unwrap_or_default();
         let mut job =
             jobs::pending_job(JobMode::VideoGenerate, model.as_str(), Some(prompt.clone()));
@@ -537,7 +561,6 @@ impl ImagineClient {
             s.upsert_result(&job)?;
         }
 
-        let cost = estimate::estimate_video(model, duration);
         if wait {
             self.finish_video_job(job, &request_id, library, store, Some(cost.estimated_usd))
                 .await
@@ -568,6 +591,9 @@ impl ImagineClient {
                 model.as_str()
             )));
         }
+        // Edit duration unknown; rough mid estimate 6s of base video model.
+        let cost = estimate::estimate_video(model, 6);
+        self.check_spend(store, cost.estimated_usd)?;
 
         let mut job =
             jobs::pending_job(JobMode::VideoEdit, model.as_str(), Some(req.prompt.clone()));
@@ -598,8 +624,6 @@ impl ImagineClient {
             s.upsert_result(&job)?;
         }
 
-        // Edit duration unknown; rough mid estimate 6s of base video model.
-        let cost = estimate::estimate_video(model, 6);
         if wait {
             self.finish_video_job(job, &request_id, library, store, Some(cost.estimated_usd))
                 .await
@@ -631,6 +655,8 @@ impl ImagineClient {
             )));
         }
         let duration = req.duration.unwrap_or(6).clamp(2, 10);
+        let cost = estimate::estimate_video(model, duration);
+        self.check_spend(store, cost.estimated_usd)?;
 
         let mut job = jobs::pending_job(
             JobMode::VideoExtend,
@@ -668,7 +694,6 @@ impl ImagineClient {
             s.upsert_result(&job)?;
         }
 
-        let cost = estimate::estimate_video(model, duration);
         if wait {
             self.finish_video_job(job, &request_id, library, store, Some(cost.estimated_usd))
                 .await
@@ -1200,6 +1225,7 @@ impl ImagineClient {
         job.error = Some(err.to_string());
         job.error_type = Some(match &err {
             Error::UpstreamTransport(_) => "transport".into(),
+            Error::SpendLimit(_) => "spend_limit".into(),
             Error::InvalidMode(_) => "invalid_mode".into(),
             Error::Serde(_) | Error::Other(_) => "parse".into(),
             _ => "upstream".into(),

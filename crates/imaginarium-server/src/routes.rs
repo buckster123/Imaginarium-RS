@@ -61,6 +61,17 @@ fn err_response(status: StatusCode, msg: impl ToString) -> Response {
         .into_response()
 }
 
+fn client_err(e: imaginarium_core::Error) -> Response {
+    use imaginarium_core::Error as E;
+    let status = match e {
+        E::InvalidMode(_) | E::SpendLimit(_) => StatusCode::BAD_REQUEST,
+        E::Forbidden(_) => StatusCode::FORBIDDEN,
+        E::JobNotFound(_) => StatusCode::NOT_FOUND,
+        _ => StatusCode::BAD_GATEWAY,
+    };
+    err_response(status, e)
+}
+
 async fn models() -> impl IntoResponse {
     Json(imaginarium_core::client::models_table_json())
 }
@@ -132,7 +143,7 @@ async fn image_gen(State(state): State<AppState>, Json(body): Json<ImageGenBody>
         .await
     {
         Ok(r) => Json(r).into_response(),
-        Err(e) => err_response(StatusCode::BAD_GATEWAY, e),
+        Err(e) => client_err(e),
     }
 }
 
@@ -193,7 +204,7 @@ async fn image_edit(State(state): State<AppState>, Json(body): Json<ImageEditBod
         .await
     {
         Ok(r) => Json(r).into_response(),
-        Err(e) => err_response(StatusCode::BAD_GATEWAY, e),
+        Err(e) => client_err(e),
     }
 }
 
@@ -268,7 +279,7 @@ async fn video_gen(State(state): State<AppState>, Json(body): Json<VideoGenBody>
         .await
     {
         Ok(r) => Json(r).into_response(),
-        Err(e) => err_response(StatusCode::BAD_GATEWAY, e),
+        Err(e) => client_err(e),
     }
 }
 
@@ -311,7 +322,7 @@ async fn video_edit(State(state): State<AppState>, Json(body): Json<VideoEditBod
         .await
     {
         Ok(r) => Json(r).into_response(),
-        Err(e) => err_response(StatusCode::BAD_GATEWAY, e),
+        Err(e) => client_err(e),
     }
 }
 
@@ -359,7 +370,7 @@ async fn video_extend(
         .await
     {
         Ok(r) => Json(r).into_response(),
-        Err(e) => err_response(StatusCode::BAD_GATEWAY, e),
+        Err(e) => client_err(e),
     }
 }
 

@@ -120,7 +120,7 @@ Full route/param/auth reference: **`openapi/imaginarium-v1.yaml`** (regenerated 
 
 ### Not in v1 — planned, do NOT build against yet
 
-These appear in `docs/ARCHITECTURE.md` but are **not implemented**: SSE job events (`GET /v1/jobs/{id}/events`), library listing / get / delete / upload (`GET`/`DELETE /v1/library`, `GET /v1/library/{id}`, `POST /v1/library/upload`), a standalone video poll route (`GET /v1/videos/{id}`), and per-token rate limits / spend caps. For v1 the ApexOS surface should **poll `GET /v1/jobs/{id}`** (or `POST …/wait`) rather than expect SSE, and treat library assets via `GET /v1/library/{id}/content`.
+These appear in `docs/ARCHITECTURE.md` but are **not implemented**: SSE job events (`GET /v1/jobs/{id}/events`), library listing / get / delete / upload (`GET`/`DELETE /v1/library`, `GET /v1/library/{id}`, `POST /v1/library/upload`), a standalone video poll route (`GET /v1/videos/{id}`), and per-token rate limits. Spend caps **are** implemented as optional `[limits] max_usd_per_job` / `max_usd_per_day` in config. For v1 the ApexOS surface should **poll `GET /v1/jobs/{id}`** (or `POST …/wait`) rather than expect SSE, and treat library assets via `GET /v1/library/{id}/content`.
 
 ### Slint patterns (already in ApexOS)
 

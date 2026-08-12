@@ -137,6 +137,27 @@ impl JobStore {
         }
         Ok(out)
     }
+
+    /// Sum `usage.estimated_usd` for jobs created at/after `since` that look
+    /// like committed spend (pending/running/done). Used by the daily cap.
+    pub fn estimated_spend_since(&self, since: DateTime<Utc>) -> Result<f64> {
+        let conn = self.conn.lock().map_err(|e| Error::Db(e.to_string()))?;
+        let mut stmt = conn.prepare(
+            "SELECT result_json FROM jobs WHERE created_at >= ?1 AND status IN ('pending','running','done')",
+        )?;
+        let since_s = since.to_rfc3339();
+        let mut rows = stmt.query(params![since_s])?;
+        let mut total = 0.0;
+        while let Some(row) = rows.next()? {
+            let json: String = row.get(0)?;
+            if let Ok(v) = serde_json::from_str::<serde_json::Value>(&json) {
+                if let Some(usd) = v.pointer("/usage/estimated_usd").and_then(|x| x.as_f64()) {
+                    total += usd;
+                }
+            }
+        }
+        Ok(total)
+    }
 }
 
 #[derive(Debug, Clone, serde::Serialize)]
@@ -213,5 +234,28 @@ mod tests {
         store.upsert_result(&job(&id, JobStatus::Running)).unwrap();
         store.upsert_result(&job(&id, JobStatus::Done)).unwrap();
         assert_eq!(store.get(&id).unwrap().unwrap().status, JobStatus::Done);
+    }
+
+    #[test]
+    fn estimated_spend_sums_todays_committed_jobs() {
+        let dir = tempdir().unwrap();
+        let store = JobStore::open(&dir.path().join("j.db")).unwrap();
+        let mut a = pending_job(JobMode::ImageGenerate, "grok-imagine-image", None);
+        a.status = JobStatus::Done;
+        a.usage = Some(crate::types::UsageInfo {
+            estimated_usd: Some(0.04),
+            upstream_ticks: None,
+        });
+        store.upsert_result(&a).unwrap();
+        let mut b = pending_job(JobMode::VideoGenerate, "grok-imagine-video-1.5", None);
+        b.status = JobStatus::Failed;
+        b.usage = Some(crate::types::UsageInfo {
+            estimated_usd: Some(9.99),
+            upstream_ticks: None,
+        });
+        store.upsert_result(&b).unwrap();
+        let since = Utc::now() - chrono::Duration::hours(1);
+        let sum = store.estimated_spend_since(since).unwrap();
+        assert!((sum - 0.04).abs() < 1e-9, "failed jobs must not count");
     }
 }
