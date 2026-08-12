@@ -12,7 +12,9 @@ use imaginarium_core::config::Config;
 use imaginarium_core::estimate;
 use imaginarium_core::jobs::JobStore;
 use imaginarium_core::library::{media_from_node_input, Library};
-use imaginarium_core::models::{parse_optional_image_quality, parse_reference_audios, ModelId};
+use imaginarium_core::models::{
+    parse_model_selector, parse_optional_image_quality, parse_reference_audios, ModelId,
+};
 use imaginarium_core::types::{JobId, JobResult};
 use reqwest::Client;
 use serde_json::{json, Value};
@@ -73,7 +75,14 @@ impl LocalBackend {
 }
 
 fn parse_model(s: Option<&str>, default: &str) -> Result<ModelId> {
-    ModelId::parse(s.unwrap_or(default)).map_err(|e| anyhow!(e))
+    match parse_model_selector(s).map_err(|e| anyhow!(e))? {
+        Some(m) => Ok(m),
+        None => ModelId::parse(default).map_err(|e| anyhow!(e)),
+    }
+}
+
+fn optional_model(s: Option<&str>) -> Result<Option<ModelId>> {
+    parse_model_selector(s).map_err(|e| anyhow!(e))
 }
 
 fn job_json(r: JobResult) -> Value {
@@ -170,12 +179,8 @@ impl Backend for LocalBackend {
     }
 
     async fn video_generate(&self, args: &Value) -> Result<Value> {
-        let explicit = args.get("model").and_then(|v| v.as_str()).is_some();
-        let model = args["model"]
-            .as_str()
-            .map(ModelId::parse)
-            .transpose()
-            .map_err(|e| anyhow!(e))?;
+        let model = optional_model(args["model"].as_str())?;
+        let explicit = model.is_some();
         let refs = match args["reference_images"].as_array() {
             Some(a) => a
                 .iter()
@@ -235,11 +240,7 @@ impl Backend for LocalBackend {
         let video = args["video"]
             .as_str()
             .ok_or_else(|| anyhow!("video required"))?;
-        let model = args["model"]
-            .as_str()
-            .map(ModelId::parse)
-            .transpose()
-            .map_err(|e| anyhow!(e))?;
+        let model = optional_model(args["model"].as_str())?;
         let no_wait = crate::args::bool_or(args, "no_wait", false)?;
         let jobs = self.jobs()?;
         let client = self.client()?;
@@ -268,11 +269,7 @@ impl Backend for LocalBackend {
         let video = args["video"]
             .as_str()
             .ok_or_else(|| anyhow!("video required"))?;
-        let model = args["model"]
-            .as_str()
-            .map(ModelId::parse)
-            .transpose()
-            .map_err(|e| anyhow!(e))?;
+        let model = optional_model(args["model"].as_str())?;
         let no_wait = crate::args::bool_or(args, "no_wait", false)?;
         let jobs = self.jobs()?;
         let client = self.client()?;
@@ -505,5 +502,20 @@ impl Backend for ProxyBackend {
             "/v1/craft/video/render?no_wait=true".to_string()
         };
         self.post(&path, timeline).await
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn auto_model_is_not_a_parse_error() {
+        assert!(optional_model(Some("auto")).unwrap().is_none());
+        assert!(optional_model(Some("")).unwrap().is_none());
+        assert!(optional_model(None).unwrap().is_none());
+        assert_eq!(parse_model(Some("auto"), "video").unwrap(), ModelId::Video);
+        assert_eq!(optional_model(Some("1.5")).unwrap(), Some(ModelId::Video15));
+        assert!(optional_model(Some("nope")).is_err());
     }
 }

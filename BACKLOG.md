@@ -74,8 +74,7 @@ Track-it and rematch leftovers. Not blockers for LAN loopback.
 - [ ] A stray file in a job dir can make asset lookup miss. library walk
 - [ ] `POST /v1/estimate` is Write-scoped; `POST …/wait` is Read-scoped though it
       polls + writes disk. Scope-map tidy. `auth.rs`
-- [ ] MCP `model:"auto"` on local video edit/extend still goes through `ModelId::parse`
-      (HTTP generate path is fine).
+- [x] MCP `model:"auto"` on local video generate/edit/extend uses `parse_model_selector`.
 
 ---
 
