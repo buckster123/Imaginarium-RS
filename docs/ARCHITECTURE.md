@@ -1,6 +1,6 @@
 # Imaginarium-RS — Architecture Plan (v3, defaults folded)
-Date: 2026-07-28
-Status: READY FOR READ-OVER — all product defaults locked; scaffold only after Andre signs off
+Date: 2026-07-28 (locked plan) · as-built rematch **2026-08-12**
+Status: **SHIPPED** as v0.1 local-first. This file is the original locked plan; §2 / §8–11 carry as-built notes. Live ledger: `BACKLOG.md`. Next queued: §11 per-token rate limit (spend caps already exist).
 Repo target: `~/Projects/Imaginarium-RS` (GH: `buckster123/Imaginarium-RS`)
 CLI bin: `imaginarium` only (no short alias in v1)
 
@@ -61,27 +61,32 @@ Auth: `Authorization: Bearer $XAI_API_KEY`
 | Model | Modes | Notes |
 |---|---|---|
 | `grok-imagine-image` | T2I, edit | Fast / cheaper |
-| `grok-imagine-image-quality` | T2I, edit | Higher fidelity |
-| `grok-imagine-video` | T2V, R2V, edit, extend, legacy I2V | Default multi-mode video |
-| `grok-imagine-video-1.5` | **I2V only** | Only 1080p path; no T2V/R2V |
+| `grok-imagine-image-quality` | T2I, edit | 1.x higher-fidelity tier |
+| `grok-imagine-image-2.0` | T2I, edit | Aug 2026 model; optional `quality`=`low`\|`medium` |
+| `grok-imagine-video` | T2V, I2V, R2V, edit, extend | Legacy; max 720p; no voices |
+| `grok-imagine-video-1.5` | T2V, I2V, R2V | Default generate model. 1080p on T2V/I2V; R2V + `reference_audios` cap 720p |
 
 ### 2.3 Parameter rules (encode in capability matrix)
 
 **Images**
 - `prompt`, `model`, `n`, `aspect_ratio` (incl. `auto`, phone ratios), `resolution` (`1k`|`2k`)
+- `quality`: `low` | `medium` — **Image 2.0 only** (omit for upstream default `medium`)
 - `response_format`: `url` | `b64_json`
-- edits: `image` OR `images[]` (max 3); multi-ref tokens `<IMAGE_0>`…
+- edits: `image` OR `images[]` (max 3 per API docs; consumer 2.0 UI allows 5); multi-ref tokens `<IMAGE_0>`…
 - each media input: `{url}` | `{file_id}` | local path→data-URI (client-side)
 - `storage_options` only when cloud profile enabled
 
 **Video**
 - modes mutually exclusive: prompt-only | `image` | `reference_images` | edit `video` | extend `video`
-- **forbid** `image` + `reference_images`
+- **forbid** `image` + `reference_images` / `reference_audios`
+- `reference_audios`: up to 3 preset `voice_id`s on **video-1.5 R2V** (audio-only is valid)
 - duration 1–15s gen; extend segment 2–10s (default 6) **adds** to original length
 - AR: 1:1, 16:9, 9:16, 4:3, 3:4, 3:2, 2:3
-- res: 480p | 720p | 1080p (1080p only video-1.5 I2V)
+- res: 480p | 720p | 1080p (1080p only video-1.5 T2V/I2V; R2V max 720p)
 - edit inherits input duration/AR/res (cap ~720p / ~8.7s)
-- poll statuses: `pending` | `done` | `failed` | `expired`
+- poll statuses: `pending` | `done` | `failed` | `expired` (timeout stays `running` + `error_type=timeout`)
+- `GET /v1/jobs/{id}` polls upstream once for a non-terminal video (so `no_wait` works over HTTP / MCP proxy)
+- assets: `content_url=/v1/library/{id}/content[?i=N]` only when a local file landed; `auto_download` miss is `Done` + `ok=false` + `error_type=download`
 - outputs: ephemeral URL; optional file_output when cloud profile on
 
 ### 2.4 Pricing ballpark (warn in UI/CLI)
@@ -90,6 +95,7 @@ Auth: `Authorization: Bearer $XAI_API_KEY`
 |---|---|
 | image | $0.02 / out |
 | image-quality | $0.05–0.07 / out |
+| image-2.0 | $0.04 / out |
 | video | $0.05–0.07 / sec |
 | video-1.5 | $0.08–0.25 / sec (res) |
 | Files storage | $0.025 / GiB / day (opt-in only) |
@@ -295,6 +301,7 @@ Imaginarium-RS/
 │   │   ├── library.rs                  # local asset store
 │   │   ├── jobs.rs                     # sqlite job records
 │   │   ├── estimate.rs                 # cost estimator
+│   │   ├── craft_video.rs              # local ffmpeg timeline (no upstream spend)
 │   │   └── config.rs
 │   ├── imaginarium-server/             # axum — API + static browser UI + SSE
 │   ├── imaginarium-mcp/                # stdio MCP (+ optional HTTP MCP feature)
@@ -365,7 +372,7 @@ imaginarium video gen -p "..."    # hits remote node, no local xAI key
 
 ## 8. HTTP API (node)
 
-Versioned under `/v1`. **`openapi/imaginarium-v1.yaml` is the shipped-route source of truth** (regenerated 2026-07-28). The sketch in §8.1 is the original design — some entries (SSE `/v1/jobs/{id}/events`, library list/get/delete/upload, `GET /v1/videos/{id}` poll, per-token rate limits) are **not yet implemented**; see the "Not in v1" note in `docs/APEXOS_IMAGINARIUM.md`.
+Versioned under `/v1`. **`openapi/imaginarium-v1.yaml` is the shipped-route source of truth** (rematched 2026-08-12). The sketch in §8.1 is the original design — some entries (SSE `/v1/jobs/{id}/events`, library list/get/delete/upload, `GET /v1/videos/{id}` poll, per-token rate limits) are **not yet implemented**; see the "Not in v1" note in `docs/APEXOS_IMAGINARIUM.md`.
 
 ### 8.1 Core
 
@@ -426,7 +433,7 @@ DELETE /v1/tokens/{id}
 
 Rules:
 - Never inline multi-MB base64 into JSON for agents
-- Always provide `content_url` on the node for LAN fetch
+- Set `content_url` **only when a local file landed** (`/v1/library/{job_id}/content[?i=N]`). Download miss → `Done` + `ok=false` + `error_type=download`, `content_url` null — caller can still try `upstream_url`
 - `local_path` only meaningful on the node filesystem (omit or null for remote clients)
 
 ---
@@ -439,16 +446,15 @@ Granular tools (better for LLMs than one mega-tool):
 |---|---|
 | `imaginarium_models` | capability matrix |
 | `imaginarium_estimate` | cost before spend |
-| `imaginarium_image_generate` | |
-| `imaginarium_image_edit` | 1–3 images |
-| `imaginarium_video_generate` | mode by fields present |
-| `imaginarium_video_edit` | |
-| `imaginarium_video_extend` | |
-| `imaginarium_job_status` | non-blocking |
-| `imaginarium_job_wait` | blocking w/ timeout |
-| `imaginarium_library_list` | |
-| `imaginarium_library_get` | metadata + content_url |
-| `imaginarium_download` | force pull to path (node-local) |
+| `imaginarium_image_generate` | aliases `image` / `quality` / `2.0`; optional `quality` on 2.0 |
+| `imaginarium_image_edit` | 1–3 images (`library:{job_id}` preferred) |
+| `imaginarium_video_generate` | T2V / I2V / R2V; default **1.5**; `reference_audios` / `voice_id` |
+| `imaginarium_video_edit` | legacy `video` model |
+| `imaginarium_video_extend` | legacy `video` model |
+| `imaginarium_craft_video` | local ffmpeg cut (no upstream spend) |
+| `imaginarium_job_status` | non-blocking; HTTP GET also polls pending video |
+| `imaginarium_job_wait` | blocking w/ timeout (`ping` / `tools/list` stay live) |
+| `imaginarium_jobs_list` | recent local jobs |
 
 Long video: agents should `generate` → poll `job_status` unless client timeout ≥ 600s.
 
@@ -483,13 +489,14 @@ Implemented once in `imaginarium-core::models`, consumed by CLI/API/MCP/UI.
 |---|---|---|---|---|---|---|---|---|
 | image | ✓ | ✓ | | | | | | 2k |
 | image-quality | ✓ | ✓ | | | | | | 2k |
-| video | | | ✓ | ✓* | ✓ | ✓ | ✓ | 720p |
-| video-1.5 | | | | ✓ | | | | **1080p** |
+| image-2.0 | ✓ | ✓ | | | | | | 2k |
+| video | | | ✓ | ✓ | ✓ | ✓ | ✓ | 720p |
+| video-1.5 | | | ✓ | ✓ | ✓ | | | **1080p** (R2V 720p) |
 
-\*legacy I2V on `video`; prefer 1.5 when image present and user didn’t force model.
+Generate modes default to `video-1.5`. Edit/extend stay on `video`.
 
 Reject early with structured error:
-`{ ok:false, error_type:"invalid_mode", message:"grok-imagine-video-1.5 does not support text-to-video" }`
+`{ ok:false, error_type:"invalid_mode", message:"1080p is not supported on reference-to-video (max 720p)" }`
 
 ---
 
@@ -499,11 +506,11 @@ Reject early with structured error:
 - Default listen: `127.0.0.1:8791`; LAN requires explicit `--bind 0.0.0.0:8791` (or interface IP)
 - Admin routes (token mint, upstream-key presence) need admin-scoped token
 - Upstream xAI key never returned by API
-- Path traversal guard on library
-- Rate limit per token (simple token bucket) to stop runaway agent loops
-- Optional max_usd_per_job / daily cap in config
-- Redact tokens in logs
-- CORS allowlist for browser UI origins (default same-host)
+- Path traversal guard on library (safe asset-id; remote callers cannot pass bare paths)
+- Optional spend caps in config (`[limits] max_usd_per_job`, `max_usd_per_day`; omit or `0` = off). Estimated USD is checked **before** the upstream POST. Daily sum is pending+running+done jobs.
+- Per-token rate limit (token bucket) is **not shipped** — queued; see `BACKLOG.md` Next. Spend caps are not a substitute for quota protection on intense cheap loops.
+- Redact tokens in logs (TraceLayer is method+path only)
+- CORS is not `Any` on `/v1/*`
 
 ---
 
@@ -573,7 +580,7 @@ Reject early with structured error:
 | Ephemeral URL expiry | local-first download always |
 | MCP timeouts | status/wait split; server-side jobs |
 | Mode/model illegal combos | core capability matrix |
-| Agent cost runaway | estimate tool + token rate limits + max duration config |
+| Agent cost runaway | estimate tool + optional `[limits]` USD caps; per-token rate limit queued (`BACKLOG.md`) |
 | Slint license vs MIT core | separate crate; LICENSE clarity before publish |
 | Huge base64 in LLM context | content_url only; never dump b64 in MCP results |
 | Edge node disk full | library LRU/quota config |

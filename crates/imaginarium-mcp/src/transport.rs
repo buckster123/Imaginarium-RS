@@ -13,17 +13,45 @@ pub enum Frame {
     Oversized { bytes: u64 },
 }
 
+/// Writer half — cloneable so `tools/call` can finish after the read loop
+/// has already accepted a ping.
+#[derive(Clone)]
+pub struct SharedWriter {
+    inner: std::sync::Arc<tokio::sync::Mutex<tokio::io::Stdout>>,
+}
+
+impl SharedWriter {
+    pub fn new(writer: tokio::io::Stdout) -> Self {
+        Self {
+            inner: std::sync::Arc::new(tokio::sync::Mutex::new(writer)),
+        }
+    }
+
+    pub async fn write(&self, value: &Value) -> Result<()> {
+        let mut buf = serde_json::to_string(value)?;
+        buf.push('\n');
+        let mut w = self.inner.lock().await;
+        w.write_all(buf.as_bytes()).await?;
+        w.flush().await?;
+        Ok(())
+    }
+}
+
 pub struct StdioTransport {
     reader: BufReader<tokio::io::Stdin>,
-    writer: tokio::io::Stdout,
+    writer: SharedWriter,
 }
 
 impl StdioTransport {
     pub fn new() -> Self {
         Self {
             reader: BufReader::new(stdin()),
-            writer: stdout(),
+            writer: SharedWriter::new(stdout()),
         }
+    }
+
+    pub fn writer(&self) -> SharedWriter {
+        self.writer.clone()
     }
 
     pub async fn read(&mut self) -> Result<Frame> {
@@ -58,10 +86,6 @@ impl StdioTransport {
     }
 
     pub async fn write(&mut self, value: &Value) -> Result<()> {
-        let mut buf = serde_json::to_string(value)?;
-        buf.push('\n');
-        self.writer.write_all(buf.as_bytes()).await?;
-        self.writer.flush().await?;
-        Ok(())
+        self.writer.write(value).await
     }
 }

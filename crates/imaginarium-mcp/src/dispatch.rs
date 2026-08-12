@@ -75,8 +75,8 @@ async fn route(name: &str, args: &Value, backend: Arc<dyn Backend>) -> anyhow::R
         "imaginarium_estimate" => {
             let kind = args["kind"].as_str().unwrap_or("image");
             let model = args["model"].as_str();
-            let n = args["n"].as_u64().unwrap_or(1) as u32;
-            let duration = args["duration"].as_u64().unwrap_or(8) as u32;
+            let n = crate::args::u32_or(args, "n", 1)?;
+            let duration = crate::args::u32_or(args, "duration", 8)?;
             backend.estimate(kind, model, n, duration).await
         }
         "imaginarium_image_generate" => backend.image_generate(args).await,
@@ -98,7 +98,7 @@ async fn route(name: &str, args: &Value, backend: Arc<dyn Backend>) -> anyhow::R
             backend.job_wait(job_id).await
         }
         "imaginarium_jobs_list" => {
-            let limit = args["limit"].as_u64().unwrap_or(20) as usize;
+            let limit = crate::args::u32_or(args, "limit", 20)? as usize;
             backend.jobs_list(limit).await
         }
         other => Err(anyhow::anyhow!("unknown tool: {other}")),

@@ -16,7 +16,7 @@ pub fn all_tool_schemas() -> Vec<Value> {
                 "type": "object",
                 "properties": {
                     "kind": { "type": "string", "enum": ["image", "video"] },
-                    "model": { "type": "string", "description": "Model id or alias (image, quality, video, 1.5)" },
+                    "model": { "type": "string", "description": "Model id or alias (image, quality, 2.0, video, 1.5)" },
                     "n": { "type": "integer", "description": "Image count" },
                     "duration": { "type": "integer", "description": "Video seconds" }
                 },
@@ -30,10 +30,11 @@ pub fn all_tool_schemas() -> Vec<Value> {
                 "type": "object",
                 "properties": {
                     "prompt": { "type": "string" },
-                    "model": { "type": "string", "description": "image | quality | full model id" },
+                    "model": { "type": "string", "description": "image | quality | 2.0 | full model id" },
                     "n": { "type": "integer", "default": 1 },
                     "aspect_ratio": { "type": "string" },
-                    "resolution": { "type": "string", "enum": ["1k", "2k"] }
+                    "resolution": { "type": "string", "enum": ["1k", "2k"] },
+                    "quality": { "type": "string", "enum": ["low", "medium"], "description": "Image 2.0 only; omit for upstream default medium" }
                 },
                 "required": ["prompt"]
             }),
@@ -49,20 +50,23 @@ pub fn all_tool_schemas() -> Vec<Value> {
                     "model": { "type": "string" },
                     "n": { "type": "integer", "default": 1 },
                     "aspect_ratio": { "type": "string" },
-                    "resolution": { "type": "string" }
+                    "resolution": { "type": "string" },
+                    "quality": { "type": "string", "enum": ["low", "medium"], "description": "Image 2.0 only; omit for upstream default medium" }
                 },
                 "required": ["prompt", "images"]
             }),
         ),
         tool(
             "imaginarium_video_generate",
-            "Generate video: text-to-video (prompt only), image-to-video (image=), or reference-to-video (reference_images=). For I2V from a previous generation pass image=library:{job_id} (preferred — resolves on the node, never expires; upstream URLs do). Do not combine image + reference_images. Defaults wait until done; set no_wait=true then use job_status/job_wait. I2V auto-selects video-1.5 (1080p ok).",
+            "Generate video via grok-imagine-video-1.5 by default. Modes: text-to-video (prompt only), image-to-video (image=), reference-to-video (reference_images and/or reference_audios). Audio-only R2V is valid (prompt + voices, no images). Tag refs in the prompt as <IMAGE_0>… and <AUDIO_0>…. Do not combine image + reference_*. 1080p is T2V/I2V only; R2V + voices cap at 720p. For I2V from a previous generation pass image=library:{job_id}. Defaults wait until done; set no_wait=true then job_status/job_wait.",
             json!({
                 "type": "object",
                 "properties": {
                     "prompt": { "type": "string" },
                     "image": { "type": "string", "description": "Start frame for I2V: library:{job_id}, URL, data: URL, or file_id" },
                     "reference_images": { "type": "array", "items": { "type": "string" } },
+                    "reference_audios": { "type": "array", "items": { "type": "string" }, "maxItems": 3, "description": "Video 1.5 preset voice_ids (eve, ara, leo, rex, …). Tag <AUDIO_0>…" },
+                    "voice_id": { "type": "string", "description": "Shorthand for a single reference_audios entry" },
                     "model": { "type": "string" },
                     "duration": { "type": "integer", "minimum": 1, "maximum": 15 },
                     "aspect_ratio": { "type": "string" },

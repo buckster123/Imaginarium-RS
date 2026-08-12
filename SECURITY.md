@@ -1,5 +1,16 @@
 # Imaginarium-RS — Security Posture & Audit Findings
 
+**Original audit:** 2026-07-28 (forensic write-up below — line numbers may have drifted).
+**Live ledger:** [`BACKLOG.md`](BACKLOG.md) (rematched 2026-08-12).
+
+**Status after the 2026-08-12 rematch + slices a–d.** Gating items **G1–G4** and **S1–S2**
+are closed in current code: remote media gate, safe library ids, ConnectInfo loopback
+bypass, drawtext escaping + caption cap, no CORS `Any`, path-only traces. Optional
+`[limits]` spend caps exist. Per-token rate limiting does **not**. Treat this file as
+the original finding text; treat BACKLOG as “is it still open?”.
+
+---
+
 **Audit date:** 2026-07-28
 **Scope:** full workspace (`crates/`), read-only.
 **Method:** multi-agent audit swarm (6 dimension finders → adversarial verify → synthesis),
@@ -7,7 +18,7 @@ then manual triage/dedup by a reviewer (ApexOS-RS/FORGE) before integration into
 **Baseline health at audit time:** all tests pass, clippy clean, headless workspace + GPL
 `imaginarium-slint` both compile.
 
-> **Headline.** The code is well-built, but its trust model is **single-user-localhost**.
+> **Headline (July).** The code is well-built, but its trust model is **single-user-localhost**.
 > Almost every real finding below is a place where the node **trusts the caller too much**.
 > That is fine for `imaginarium serve` on loopback for one operator; it is **not** yet safe to
 > expose on a LAN behind write/read tokens, or to embed `api_router` into another service —

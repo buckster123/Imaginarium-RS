@@ -1,5 +1,6 @@
 //! Imaginarium MCP library — stdio JSON-RPC (Cerebro/ApexOS wire format).
 
+mod args;
 mod backend;
 mod dispatch;
 mod tools;
@@ -91,17 +92,35 @@ pub async fn run(proxy_url: Option<String>) -> Result<()> {
         }
 
         let method = msg["method"].as_str().unwrap_or("").to_string();
-        let resp = match method.as_str() {
-            "tools/list" => dispatch::tools_list(&msg),
-            "tools/call" => dispatch::dispatch_tool(msg, Arc::clone(&backend)).await,
-            "ping" => serde_json::json!({
-                "jsonrpc": "2.0",
-                "id": msg["id"],
-                "result": {}
-            }),
-            _ => dispatch::method_not_found(&msg),
-        };
-        transport.write(&resp).await?;
+        match method.as_str() {
+            "tools/list" => {
+                transport.write(&dispatch::tools_list(&msg)).await?;
+            }
+            "ping" => {
+                transport
+                    .write(&serde_json::json!({
+                        "jsonrpc": "2.0",
+                        "id": msg["id"],
+                        "result": {}
+                    }))
+                    .await?;
+            }
+            "tools/call" => {
+                // Don't hold the stdio loop on a long video wait — hosts send
+                // ping / tools/list while a generate is in flight.
+                let backend = Arc::clone(&backend);
+                let writer = transport.writer();
+                tokio::spawn(async move {
+                    let resp = dispatch::dispatch_tool(msg, backend).await;
+                    if let Err(e) = writer.write(&resp).await {
+                        tracing::error!("mcp write after tools/call: {e}");
+                    }
+                });
+            }
+            _ => {
+                transport.write(&dispatch::method_not_found(&msg)).await?;
+            }
+        }
     }
 
     info!("imaginarium-mcp exiting");

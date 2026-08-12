@@ -15,6 +15,9 @@ pub enum Error {
     #[error("forbidden: {0}")]
     Forbidden(String),
 
+    #[error("spend limit: {0}")]
+    SpendLimit(String),
+
     #[error("missing credential: {0}")]
     MissingCredential(String),
 
@@ -54,6 +57,10 @@ impl Error {
 
     pub fn forbidden(msg: impl Into<String>) -> Self {
         Self::Forbidden(msg.into())
+    }
+
+    pub fn spend_limit(msg: impl Into<String>) -> Self {
+        Self::SpendLimit(msg.into())
     }
 
     pub fn other(msg: impl Into<String>) -> Self {

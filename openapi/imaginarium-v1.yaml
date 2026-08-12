@@ -19,7 +19,9 @@ info:
     (`GET /v1/jobs/{id}/events`), library listing/get/delete/upload
     (`GET/DELETE /v1/library`, `GET /v1/library/{id}`, `POST /v1/library/upload`),
     a standalone video poll route (`GET /v1/videos/{id}`), and per-token rate limits
-    / spend caps — are intentionally omitted here. Do not build against them yet.
+    — are intentionally omitted here. Do not build against them yet. Optional
+    spend caps live in config (`[limits] max_usd_per_job` / `max_usd_per_day`), not
+    as extra routes.
 servers:
   - url: http://127.0.0.1:8791
     description: Default loopback bind. LAN use requires an explicit non-loopback bind and a token.
@@ -45,7 +47,7 @@ components:
         id: { type: string }
         kind: { type: string, enum: [image, video, audio], description: audio = imported tracks (music beds) — never produced upstream }
         local_path: { type: string, nullable: true, description: Node-local path (omitted for remote clients) }
-        content_url: { type: string, nullable: true, description: "Node-relative bytes path, e.g. /v1/library/{id}/content" }
+        content_url: { type: string, nullable: true, description: "Set only when the node stored the file. Node-relative path, e.g. /v1/library/{id}/content[?i=N]. Null on auto_download miss." }
         upstream_url: { type: string, nullable: true, description: Ephemeral xAI URL (may expire) }
         file_id: { type: string, nullable: true }
         public_url: { type: string, nullable: true }
@@ -68,7 +70,7 @@ components:
             estimated_usd: { type: number, nullable: true }
             upstream_ticks: { type: integer, nullable: true }
         error: { type: string, nullable: true }
-        error_type: { type: string, nullable: true, description: e.g. upstream, parse, timeout }
+        error_type: { type: string, nullable: true, description: "upstream | parse | timeout | download | spend_limit | invalid_mode" }
         created_at: { type: string, format: date-time }
         completed_at: { type: string, format: date-time, nullable: true }
         prompt: { type: string, nullable: true }
@@ -198,13 +200,14 @@ paths:
               required: [prompt]
               properties:
                 prompt: { type: string }
-                model: { type: string, description: "grok-imagine-image | grok-imagine-image-quality | \"auto\" | omit" }
+                model: { type: string, description: "grok-imagine-image | grok-imagine-image-quality | grok-imagine-image-2.0 | aliases image/quality/2.0 | \"auto\" | omit" }
                 n: { type: integer }
                 aspect_ratio: { type: string }
                 resolution: { type: string, enum: ["1k", "2k"] }
+                quality: { type: string, enum: [low, medium], description: "Image 2.0 only. Omitted → upstream default medium. Rejected on other image models." }
       responses:
         "200": { description: JobResult, content: { application/json: { schema: { $ref: '#/components/schemas/JobResult' } } } }
-        "400": { description: Invalid model/params (a bare local file path in a media field is rejected here) }
+        "400": { description: Invalid model/params (a bare local file path in a media field is rejected here) or spend cap ([limits]) }
         "502": { description: Upstream xAI error }
 
   /v1/images/edits:
@@ -227,6 +230,7 @@ paths:
                 n: { type: integer }
                 aspect_ratio: { type: string }
                 resolution: { type: string }
+                quality: { type: string, enum: [low, medium], description: "Image 2.0 only. Omitted → upstream default medium." }
       responses:
         "200": { description: JobResult, content: { application/json: { schema: { $ref: '#/components/schemas/JobResult' } } } }
         "400": { description: Bad request (too many/invalid images, bad model) }
@@ -235,7 +239,7 @@ paths:
   /v1/videos/generations:
     post:
       summary: Video generate — T2V / I2V / R2V (mode inferred from fields present)
-      description: "Exactly one of: prompt-only (T2V), image (I2V), reference_images (R2V). image + reference_images together is rejected."
+      description: "Mode inferred from fields: prompt-only (T2V), image (I2V), reference_images and/or reference_audios (R2V). image + reference_* is rejected. Default model is grok-imagine-video-1.5. 1080p is T2V/I2V only; R2V max 720p."
       requestBody:
         required: true
         content:
@@ -244,16 +248,17 @@ paths:
               type: object
               properties:
                 prompt: { type: string }
-                model: { type: string, description: "\"auto\"/omit auto-selects by modality (I2V→video-1.5, else video)" }
+                model: { type: string, description: "\"auto\"/omit → grok-imagine-video-1.5 for generate modes" }
                 image: { type: string, description: "I2V start frame: library:{job_id}, data:, http(s), or file_…" }
                 reference_images: { type: array, items: { type: string, description: "library:{job_id}, data:, http(s), or file_…" } }
+                reference_audios: { type: array, maxItems: 3, items: { type: string, description: "Video 1.5 preset voice_id (eve, ara, leo, rex, …). Tag <AUDIO_0>… in the prompt. Audio-only R2V is valid." } }
                 duration: { type: integer, description: "1-15s (clamped)" }
                 aspect_ratio: { type: string }
                 resolution: { type: string, enum: [480p, 720p, 1080p] }
-                no_wait: { type: boolean, description: "true = return after submit (poll with /v1/jobs/{id}/wait)" }
+                no_wait: { type: boolean, description: "true = return after submit (poll GET /v1/jobs/{id} or POST /v1/jobs/{id}/wait)" }
       responses:
         "200": { description: "JobResult (status may be pending/running when no_wait or on wait timeout)", content: { application/json: { schema: { $ref: '#/components/schemas/JobResult' } } } }
-        "400": { description: Illegal mode/model/resolution combination }
+        "400": { description: Illegal mode/model/resolution combination, or spend cap ([limits]) }
         "502": { description: Upstream xAI error }
 
   /v1/videos/edits:
@@ -308,6 +313,7 @@ paths:
   /v1/jobs/{job_id}:
     get:
       summary: Get a job by local ULID
+      description: "Returns the stored row. For a non-terminal video job with an upstream_request_id, this also polls xAI once (video_status_once) so no_wait generate + GET completes over HTTP and the MCP proxy. Craft/image jobs and terminal rows are returned as-is. A poll error returns the last known row rather than 502."
       parameters:
         - { name: job_id, in: path, required: true, schema: { type: string } }
       responses:

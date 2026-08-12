@@ -12,7 +12,10 @@ use imaginarium_core::client::{
 use imaginarium_core::estimate;
 use imaginarium_core::jobs::JobStore;
 use imaginarium_core::library::media_from_node_input;
-use imaginarium_core::models::{parse_model_selector, ModelId};
+use imaginarium_core::models::{
+    parse_model_selector, parse_optional_image_quality, parse_reference_audios,
+    validate_image_quality, ModelId,
+};
 use imaginarium_core::tokens::TokenScope;
 use imaginarium_core::types::{JobId, JobMode, JobResult, JobStatus, MediaRef};
 use serde::Deserialize;
@@ -58,6 +61,17 @@ fn err_response(status: StatusCode, msg: impl ToString) -> Response {
         .into_response()
 }
 
+fn client_err(e: imaginarium_core::Error) -> Response {
+    use imaginarium_core::Error as E;
+    let status = match e {
+        E::InvalidMode(_) | E::SpendLimit(_) => StatusCode::BAD_REQUEST,
+        E::Forbidden(_) => StatusCode::FORBIDDEN,
+        E::JobNotFound(_) => StatusCode::NOT_FOUND,
+        _ => StatusCode::BAD_GATEWAY,
+    };
+    err_response(status, e)
+}
+
 async fn models() -> impl IntoResponse {
     Json(imaginarium_core::client::models_table_json())
 }
@@ -91,6 +105,8 @@ struct ImageGenBody {
     n: Option<u32>,
     aspect_ratio: Option<String>,
     resolution: Option<String>,
+    /// Image 2.0 only: `low` | `medium`.
+    quality: Option<String>,
 }
 
 async fn image_gen(State(state): State<AppState>, Json(body): Json<ImageGenBody>) -> Response {
@@ -98,6 +114,13 @@ async fn image_gen(State(state): State<AppState>, Json(body): Json<ImageGenBody>
         Ok(m) => m.unwrap_or(ModelId::Image),
         Err(e) => return err_response(StatusCode::BAD_REQUEST, e),
     };
+    let quality = match parse_optional_image_quality(body.quality.as_deref()) {
+        Ok(q) => q,
+        Err(e) => return err_response(StatusCode::BAD_REQUEST, e),
+    };
+    if let Err(e) = validate_image_quality(model, quality) {
+        return err_response(StatusCode::BAD_REQUEST, e);
+    }
     let jobs = match JobStore::open(&state.cfg.db_path()) {
         Ok(j) => j,
         Err(e) => return err_response(StatusCode::INTERNAL_SERVER_ERROR, e),
@@ -111,6 +134,7 @@ async fn image_gen(State(state): State<AppState>, Json(body): Json<ImageGenBody>
                 n: body.n.unwrap_or(1),
                 aspect_ratio: body.aspect_ratio,
                 resolution: body.resolution,
+                quality,
                 response_format: ResponseFormat::Url,
             },
             &state.library,
@@ -119,7 +143,7 @@ async fn image_gen(State(state): State<AppState>, Json(body): Json<ImageGenBody>
         .await
     {
         Ok(r) => Json(r).into_response(),
-        Err(e) => err_response(StatusCode::BAD_GATEWAY, e),
+        Err(e) => client_err(e),
     }
 }
 
@@ -131,6 +155,8 @@ struct ImageEditBody {
     n: Option<u32>,
     aspect_ratio: Option<String>,
     resolution: Option<String>,
+    /// Image 2.0 only: `low` | `medium`.
+    quality: Option<String>,
 }
 
 async fn image_edit(State(state): State<AppState>, Json(body): Json<ImageEditBody>) -> Response {
@@ -138,6 +164,13 @@ async fn image_edit(State(state): State<AppState>, Json(body): Json<ImageEditBod
         Ok(m) => m.unwrap_or(ModelId::Image),
         Err(e) => return err_response(StatusCode::BAD_REQUEST, e),
     };
+    let quality = match parse_optional_image_quality(body.quality.as_deref()) {
+        Ok(q) => q,
+        Err(e) => return err_response(StatusCode::BAD_REQUEST, e),
+    };
+    if let Err(e) = validate_image_quality(model, quality) {
+        return err_response(StatusCode::BAD_REQUEST, e);
+    }
     let lib_root = state.cfg.library_dir();
     let refs: Vec<MediaRef> = match body
         .images
@@ -162,6 +195,7 @@ async fn image_edit(State(state): State<AppState>, Json(body): Json<ImageEditBod
                 n: body.n.unwrap_or(1),
                 aspect_ratio: body.aspect_ratio,
                 resolution: body.resolution,
+                quality,
                 response_format: ResponseFormat::Url,
             },
             &state.library,
@@ -170,7 +204,7 @@ async fn image_edit(State(state): State<AppState>, Json(body): Json<ImageEditBod
         .await
     {
         Ok(r) => Json(r).into_response(),
-        Err(e) => err_response(StatusCode::BAD_GATEWAY, e),
+        Err(e) => client_err(e),
     }
 }
 
@@ -180,6 +214,8 @@ struct VideoGenBody {
     model: Option<String>,
     image: Option<String>,
     reference_images: Option<Vec<String>>,
+    /// Video 1.5 preset voice_ids (max 3). Audio-only R2V is valid.
+    reference_audios: Option<Vec<String>>,
     duration: Option<u32>,
     aspect_ratio: Option<String>,
     resolution: Option<String>,
@@ -214,6 +250,10 @@ async fn video_gen(State(state): State<AppState>, Json(body): Json<VideoGenBody>
         Ok(v) => v,
         Err(e) => return err_response(StatusCode::BAD_REQUEST, e),
     };
+    let reference_audios = match parse_reference_audios(body.reference_audios.unwrap_or_default()) {
+        Ok(v) => v,
+        Err(e) => return err_response(StatusCode::BAD_REQUEST, e),
+    };
     let jobs = match JobStore::open(&state.cfg.db_path()) {
         Ok(j) => j,
         Err(e) => return err_response(StatusCode::INTERNAL_SERVER_ERROR, e),
@@ -227,6 +267,7 @@ async fn video_gen(State(state): State<AppState>, Json(body): Json<VideoGenBody>
                 explicit_model: explicit,
                 image,
                 reference_images: refs,
+                reference_audios,
                 duration: body.duration,
                 aspect_ratio: body.aspect_ratio,
                 resolution: body.resolution,
@@ -238,7 +279,7 @@ async fn video_gen(State(state): State<AppState>, Json(body): Json<VideoGenBody>
         .await
     {
         Ok(r) => Json(r).into_response(),
-        Err(e) => err_response(StatusCode::BAD_GATEWAY, e),
+        Err(e) => client_err(e),
     }
 }
 
@@ -281,7 +322,7 @@ async fn video_edit(State(state): State<AppState>, Json(body): Json<VideoEditBod
         .await
     {
         Ok(r) => Json(r).into_response(),
-        Err(e) => err_response(StatusCode::BAD_GATEWAY, e),
+        Err(e) => client_err(e),
     }
 }
 
@@ -329,7 +370,7 @@ async fn video_extend(
         .await
     {
         Ok(r) => Json(r).into_response(),
-        Err(e) => err_response(StatusCode::BAD_GATEWAY, e),
+        Err(e) => client_err(e),
     }
 }
 
@@ -354,10 +395,38 @@ async fn jobs_get(State(state): State<AppState>, Path(id): Path<String>) -> Resp
         Ok(j) => j,
         Err(e) => return err_response(StatusCode::INTERNAL_SERVER_ERROR, e),
     };
-    match jobs.get(&JobId(id.clone())) {
-        Ok(Some(j)) => Json(j).into_response(),
-        Ok(None) => err_response(StatusCode::NOT_FOUND, format!("job not found: {id}")),
-        Err(e) => err_response(StatusCode::INTERNAL_SERVER_ERROR, e),
+    let job = match jobs.get(&JobId(id.clone())) {
+        Ok(Some(j)) => j,
+        Ok(None) => return err_response(StatusCode::NOT_FOUND, format!("job not found: {id}")),
+        Err(e) => return err_response(StatusCode::INTERNAL_SERVER_ERROR, e),
+    };
+    // Local MCP already polls via video_status_once. HTTP GET (and the MCP
+    // proxy that just GETs this route) used to return the stale DB row, so
+    // no_wait video never completed over the fat-node path.
+    let should_poll = job.upstream_request_id.is_some()
+        && matches!(
+            job.mode,
+            JobMode::VideoGenerate | JobMode::VideoEdit | JobMode::VideoExtend
+        )
+        && !matches!(
+            job.status,
+            JobStatus::Done | JobStatus::Failed | JobStatus::Expired | JobStatus::Cancelled
+        );
+    if !should_poll {
+        return Json(job).into_response();
+    }
+    match state
+        .client
+        .video_status_once(&job.job_id, &state.library, &jobs)
+        .await
+    {
+        Ok(j) => Json(j).into_response(),
+        Err(e) => {
+            // Keep the last known row — a transient poll error must not hide
+            // a job the caller already paid for.
+            tracing::warn!(job_id = %id, "jobs_get poll failed, returning last row: {e}");
+            Json(job).into_response()
+        }
     }
 }
 
@@ -499,11 +568,16 @@ async fn library_import(
     State(state): State<AppState>,
     Json(body): Json<LibraryImportBody>,
 ) -> Response {
+    if imaginarium_core::library::estimate_b64_decoded_len(&body.data)
+        > imaginarium_core::library::IMPORT_MAX_BYTES
+    {
+        return err_response(StatusCode::PAYLOAD_TOO_LARGE, "max 40MB import");
+    }
     let (bytes, ext) = match imaginarium_core::library::decode_data_url_or_b64(&body.data) {
         Ok(v) => v,
         Err(e) => return err_response(StatusCode::BAD_REQUEST, e),
     };
-    if bytes.len() > 40 * 1024 * 1024 {
+    if bytes.len() > imaginarium_core::library::IMPORT_MAX_BYTES {
         return err_response(StatusCode::PAYLOAD_TOO_LARGE, "max 40MB import");
     }
     let filename = body.filename.unwrap_or_else(|| format!("import.{ext}"));

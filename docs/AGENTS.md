@@ -74,22 +74,23 @@ args = ["mcp", "--proxy", "http://fat:8791"]
 # IMAGINARIUM_TOKEN in env
 ```
 
-## Tools (10)
+## Tools
 
 | Tool | Purpose |
 |---|---|
 | `imaginarium_models` | capability matrix |
 | `imaginarium_estimate` | rough USD before spend |
-| `imaginarium_image_generate` | T2I |
+| `imaginarium_image_generate` | T2I (`image` / `quality` / `2.0`; optional `quality` on 2.0) |
 | `imaginarium_image_edit` | edit 1–3 images |
-| `imaginarium_video_generate` | T2V / I2V / R2V |
-| `imaginarium_video_edit` | video edit |
-| `imaginarium_video_extend` | extend clip |
-| `imaginarium_job_status` | one-shot poll |
+| `imaginarium_video_generate` | T2V / I2V / R2V (default **1.5**; `reference_audios` / `voice_id`) |
+| `imaginarium_video_edit` | video edit (legacy `video` model) |
+| `imaginarium_video_extend` | extend clip (legacy `video` model) |
+| `imaginarium_craft_video` | local ffmpeg cut (free) |
+| `imaginarium_job_status` | one-shot poll (HTTP GET also polls pending video) |
 | `imaginarium_job_wait` | block until done |
 | `imaginarium_jobs_list` | recent jobs |
 
-**Agent tip:** for long video, prefer `no_wait=true` then `imaginarium_job_status` / `imaginarium_job_wait` so host timeouts don't kill the call mid-gen. Never dump giant base64 into chat — paths/URLs only.
+**Agent tip:** for long video, prefer `no_wait=true` then `imaginarium_job_status` / `imaginarium_job_wait`. `ping` / `tools/list` stay live during a wait. Results include `content_url` (`/v1/library/{id}/content[?i=N]`) when the node has the file — use that or `library:{job_id}`, never dump giant base64 into chat. Numeric/bool tool args must be real JSON numbers/bools, not strings. Optional `[limits]` spend caps return `error_type=spend_limit`; there is no per-token QPS throttle yet.
 
 ## Wire format
 

@@ -3,7 +3,7 @@
 **Audience:** ApexOS-RS specialized developer agent  
 **Source of truth for Imagine API:** Imaginarium-RS `openapi/imaginarium-v1.yaml` + running `imaginarium serve`  
 **Native reference client:** Imaginarium-RS `crates/imaginarium-slint` (standalone winit; GPL)  
-**Date:** 2026-07-28
+**Date:** 2026-07-28 · rematch **2026-08-12**
 
 This doc is a **feature implementation brief** for embedding Imagine studio capabilities inside ApexOS-RS `ui-slint`. It is not an Imaginarium-RS task list.
 
@@ -107,19 +107,24 @@ reference.
 
 Body size: server `DefaultBodyLimit` is **64 MB** (craft/edit data-URLs). `POST /v1/library/import` additionally caps the **decoded** payload at **40 MB** (413 above that) — so the effective import ceiling is 40 MB decoded, not 64.
 
-Full route/param/auth reference: **`openapi/imaginarium-v1.yaml`** (regenerated to match shipped code, 2026-07-28).
+Full route/param/auth reference: **`openapi/imaginarium-v1.yaml`** (rematched to shipped code, 2026-08-12).
 
-### Contract notes (verified against code 2026-07-28)
+### Contract notes (verified against code 2026-08-12)
 
-- **`model: "auto"`** — accepted on image/video/estimate (or omit `model`); selects the server default, and video auto-picks by modality (I2V→`video-1.5`, else `video`). Concrete model names still validate; unknown names 400.
+- **`model: "auto"`** — accepted on image/video/estimate (or omit `model`). Image default is `grok-imagine-image`. **Every generate mode** (T2V / I2V / R2V) defaults to `grok-imagine-video-1.5`. Edit/extend stay on legacy `grok-imagine-video` unless the caller names a model. Concrete names still validate; unknown names 400.
+- **Image 2.0** (`grok-imagine-image-2.0` / alias `2.0`) accepts optional `quality`=`low`|`medium` (omit → upstream `medium`). That field is 400 on the older image models.
+- **Video 1.5** accepts `reference_audios` (preset `voice_id`s: eve, ara, leo, rex, …; max 3; tag `<AUDIO_0>`). Audio-only R2V is valid. 1080p is T2V/I2V only; R2V + voices cap at 720p.
 - **Tokens are not logged.** `?token=` is accepted for browser `<img>`/`<video>` sources; the request-log span records method + path only (never the query string).
+- **`GET /v1/jobs/{id}`** polls upstream once for a non-terminal video job (so `no_wait` + GET works over HTTP / MCP proxy). Terminal, image, and craft rows return as-is. A poll error returns the last known row.
 - **`POST /v1/jobs/{id}/wait`** returns the job as-is for already-terminal / synchronous (image) jobs, `404` for an unknown id, and `502` only on a genuine upstream error.
 - **Media fields** (`image`, `images[]`, `reference_images`, `video`) accept `library:{job_id}` (a node-library chain ref, resolved server-side — the **preferred** form for chaining a previous generation; `#n` addresses batch asset n), plus `data:` / `http(s):` / `file_…`. A bare local filesystem path is rejected (`400`); local paths work only via the CLI.
 - **Multi-asset batches**: `GET /v1/library/{id}/content?i=N` addresses the N-th asset of an n>1 image job (default 0). `GET /v1/jobs` rows carry `prompt` + `assets` (count) so galleries need no N+1 detail fetches.
+- **`content_url`** is set only when the node stored the file. Download miss is `Done` + `ok=false` + `error_type=download` (`content_url` null; `upstream_url` may still work).
+- **Spend caps** (`[limits] max_usd_per_job` / `max_usd_per_day`) return HTTP 400 + `error_type=spend_limit`. Per-token rate limiting is **not** shipped.
 
 ### Not in v1 — planned, do NOT build against yet
 
-These appear in `docs/ARCHITECTURE.md` but are **not implemented**: SSE job events (`GET /v1/jobs/{id}/events`), library listing / get / delete / upload (`GET`/`DELETE /v1/library`, `GET /v1/library/{id}`, `POST /v1/library/upload`), a standalone video poll route (`GET /v1/videos/{id}`), and per-token rate limits / spend caps. For v1 the ApexOS surface should **poll `GET /v1/jobs/{id}`** (or `POST …/wait`) rather than expect SSE, and treat library assets via `GET /v1/library/{id}/content`.
+These appear in `docs/ARCHITECTURE.md` but are **not implemented**: SSE job events (`GET /v1/jobs/{id}/events`), library listing / get / delete / upload (`GET`/`DELETE /v1/library`, `GET /v1/library/{id}`, `POST /v1/library/upload`), a standalone video poll route (`GET /v1/videos/{id}`), and per-token rate limits. Spend caps **are** implemented as optional `[limits] max_usd_per_job` / `max_usd_per_day` in config. For v1 the ApexOS surface should **poll `GET /v1/jobs/{id}`** (or `POST …/wait`) rather than expect SSE, and treat library assets via `GET /v1/library/{id}/content`.
 
 ### Slint patterns (already in ApexOS)
 

@@ -54,7 +54,17 @@
           <select v-model="resolution">
             <option value="720p">720p</option>
             <option value="480p">480p</option>
-            <option value="1080p">1080p (1.5 I2V)</option>
+            <option value="1080p" :disabled="isR2vLike">1080p (1.5 T2V/I2V)</option>
+          </select>
+        </div>
+      </div>
+
+      <div class="row" v-if="mode === 't2v' || mode === 'r2v'">
+        <div class="field" v-for="i in 3" :key="'v' + i">
+          <label>Voice {{ i - 1 }} {{ i === 1 ? '(1.5)' : '' }}</label>
+          <select v-model="voices[i - 1]">
+            <option value="">none</option>
+            <option v-for="v in voiceIds" :key="v" :value="v">{{ v }}</option>
           </select>
         </div>
       </div>
@@ -82,7 +92,7 @@
       </div>
 
       <div v-if="mode === 'r2v'" class="field">
-        <label>Reference images</label>
+        <label>Reference images (or voices only)</label>
         <div
           class="drop"
           :class="{ drag }"
@@ -152,6 +162,8 @@ const duration = ref(6)
 const extDuration = ref(6)
 const aspect = ref('16:9')
 const resolution = ref('720p')
+const voices = ref(['', '', ''])
+const voiceIds = ['eve', 'ara', 'leo', 'rex']
 const noWait = ref(false)
 const oneFile = ref(null)
 const oneDataUrl = ref('')
@@ -172,11 +184,19 @@ const oneLabel = computed(() => {
   return 'Drop or choose file'
 })
 
+const selectedVoices = computed(() => voices.value.filter(Boolean))
+const isR2vLike = computed(
+  () => mode.value === 'r2v' || (mode.value === 't2v' && selectedVoices.value.length > 0)
+)
+
 const canRun = computed(() => {
   if (mode.value === 'edit' || mode.value === 'extend')
     return (!!oneFile.value || !!oneDataUrl.value) && !!prompt.value.trim()
   if (mode.value === 'i2v') return !!oneFile.value || !!oneDataUrl.value
-  if (mode.value === 'r2v') return refFiles.value.length > 0
+  if (mode.value === 'r2v')
+    return (
+      !!prompt.value.trim() && (refFiles.value.length > 0 || selectedVoices.value.length > 0)
+    )
   return !!prompt.value.trim()
 })
 
@@ -186,7 +206,8 @@ const videoSrc = computed(() => {
   return api.libraryContentUrl(result.value.job_id) + (t ? `?token=${encodeURIComponent(t)}` : '')
 })
 
-watch([mode, duration, model, aspect, resolution], () => {
+watch([mode, duration, model, aspect, resolution, selectedVoices], () => {
+  if (isR2vLike.value && resolution.value === '1080p') resolution.value = '720p'
   savePrefs()
   refreshEstimate()
 })
@@ -263,7 +284,9 @@ async function loadJobMedia(job, _kind) {
 
 async function refreshEstimate() {
   try {
-    const m = model.value || (mode.value === 'i2v' ? '1.5' : 'video')
+    const m =
+      model.value ||
+      (mode.value === 'edit' || mode.value === 'extend' ? 'video' : '1.5')
     const d = mode.value === 'extend' ? extDuration.value : duration.value
     estimate.value = await api.estimate({ kind: 'video', model: m, duration: d })
   } catch {
@@ -348,7 +371,11 @@ async function run() {
       resolution: resolution.value || undefined,
     }
     if (mode.value === 't2v') {
-      result.value = await api.videoGen({ ...bodyBase, duration: duration.value })
+      result.value = await api.videoGen({
+        ...bodyBase,
+        duration: duration.value,
+        reference_audios: selectedVoices.value.length ? selectedVoices.value : undefined,
+      })
     } else if (mode.value === 'i2v') {
       const image = await oneMedia()
       result.value = await api.videoGen({ ...bodyBase, image, duration: duration.value })
@@ -357,7 +384,8 @@ async function run() {
       for (const f of refFiles.value) reference_images.push(await fileToDataUrl(f))
       result.value = await api.videoGen({
         ...bodyBase,
-        reference_images,
+        reference_images: reference_images.length ? reference_images : undefined,
+        reference_audios: selectedVoices.value.length ? selectedVoices.value : undefined,
         duration: duration.value,
       })
     } else if (mode.value === 'edit') {

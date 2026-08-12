@@ -17,7 +17,9 @@ use crate::error::{Error, Result};
 use crate::estimate;
 use crate::jobs::{self, JobStore};
 use crate::library::{self, Library};
-use crate::models::{self, validate_video_generate, ModelId, VideoMode};
+use crate::models::{
+    self, validate_image_quality, validate_video_generate, ImageQuality, ModelId, VideoMode,
+};
 use crate::types::*;
 
 const USER_AGENT_VALUE: &str = concat!("Imaginarium-RS/", env!("CARGO_PKG_VERSION"));
@@ -32,6 +34,7 @@ pub struct ImagineClient {
     pub(crate) storage_public_url: bool,
     pub(crate) poll_interval: Duration,
     pub(crate) poll_timeout: Duration,
+    pub(crate) limits: crate::config::LimitsConfig,
 }
 
 #[derive(Debug, Clone)]
@@ -41,6 +44,8 @@ pub struct ImageGenerateRequest {
     pub n: u32,
     pub aspect_ratio: Option<String>,
     pub resolution: Option<String>,
+    /// Image 2.0 only (`low` | `medium`). Omitted → upstream default `medium`.
+    pub quality: Option<ImageQuality>,
     pub response_format: ResponseFormat,
 }
 
@@ -52,18 +57,22 @@ pub struct ImageEditRequest {
     pub n: u32,
     pub aspect_ratio: Option<String>,
     pub resolution: Option<String>,
+    /// Image 2.0 only (`low` | `medium`). Omitted → upstream default `medium`.
+    pub quality: Option<ImageQuality>,
     pub response_format: ResponseFormat,
 }
 
 #[derive(Debug, Clone)]
 pub struct VideoGenerateRequest {
     pub prompt: Option<String>,
-    /// If None, auto-selected from mode (I2V→1.5, else video).
+    /// If None, auto-selected (generate modes → video-1.5).
     pub model: Option<ModelId>,
     /// When true, `model` was user-forced (no auto-swap).
     pub explicit_model: bool,
     pub image: Option<MediaRef>,
     pub reference_images: Vec<MediaRef>,
+    /// Preset `voice_id`s for Video 1.5 R2V (`reference_audios`). Max 3.
+    pub reference_audios: Vec<String>,
     pub duration: Option<u32>,
     pub aspect_ratio: Option<String>,
     pub resolution: Option<String>,
@@ -117,7 +126,26 @@ impl ImagineClient {
             storage_public_url: cfg.storage.public_url,
             poll_interval: Duration::from_millis(cfg.poll.interval_ms.max(500)),
             poll_timeout: Duration::from_secs(cfg.poll.timeout_s.max(30)),
+            limits: cfg.limits.clone(),
         })
+    }
+
+    fn check_spend(&self, store: Option<&JobStore>, this_job_usd: f64) -> Result<()> {
+        let spent_today = if self.limits.max_usd_per_day.is_some() {
+            if let Some(s) = store {
+                let start = Utc::now()
+                    .date_naive()
+                    .and_hms_opt(0, 0, 0)
+                    .map(|t| t.and_utc())
+                    .unwrap_or_else(Utc::now);
+                s.estimated_spend_since(start)?
+            } else {
+                0.0
+            }
+        } else {
+            0.0
+        };
+        self.limits.check(this_job_usd, spent_today)
     }
 
     pub(crate) fn auth_headers(&self) -> HeaderMap {
@@ -206,6 +234,9 @@ impl ImagineClient {
         library: &Library,
         store: Option<&JobStore>,
     ) -> Result<JobResult> {
+        validate_image_quality(req.model, req.quality)?;
+        let cost = estimate::estimate_image(req.model, req.n);
+        self.check_spend(store, cost.estimated_usd)?;
         let mut job = jobs::pending_job(
             JobMode::ImageGenerate,
             req.model.as_str(),
@@ -216,7 +247,6 @@ impl ImagineClient {
             s.upsert_result(&job)?;
         }
 
-        let cost = estimate::estimate_image(req.model, req.n);
         let mut payload = json!({
             "model": req.model.as_str(),
             "prompt": req.prompt,
@@ -235,6 +265,12 @@ impl ImagineClient {
                 .unwrap()
                 .insert("resolution".into(), json!(res));
         }
+        if let Some(q) = req.quality {
+            payload
+                .as_object_mut()
+                .unwrap()
+                .insert("quality".into(), json!(q.as_str()));
+        }
         if let Some(storage) = self.storage_options_json("imaginarium-image.png") {
             payload
                 .as_object_mut()
@@ -244,19 +280,9 @@ impl ImagineClient {
 
         let url = format!("{}/images/generations", self.base_url);
         debug!(%url, "POST image generate");
-        let resp = self
-            .http
-            .post(&url)
-            .headers(self.auth_headers())
-            .json(&payload)
-            .send()
+        let body_text = self
+            .post_image_json(&url, &payload, job.clone(), store)
             .await?;
-
-        let status = resp.status();
-        let body_text = resp.text().await?;
-        if !status.is_success() {
-            return self.fail_job(job, store, status.as_u16(), body_text);
-        }
 
         let job = self
             .finalize_image_job(
@@ -283,11 +309,18 @@ impl ImagineClient {
                 "image edit requires at least one image",
             ));
         }
-        if req.images.len() > 3 {
-            return Err(Error::invalid_mode(
-                "image edit supports at most 3 source images",
-            ));
+        let max_src = models::get(req.model)
+            .capabilities
+            .max_source_images
+            .unwrap_or(3);
+        if req.images.len() as u32 > max_src {
+            return Err(Error::invalid_mode(format!(
+                "image edit supports at most {max_src} source images"
+            )));
         }
+        validate_image_quality(req.model, req.quality)?;
+        let cost = estimate::estimate_image(req.model, req.n);
+        self.check_spend(store, cost.estimated_usd)?;
 
         let mut job = jobs::pending_job(
             JobMode::ImageEdit,
@@ -299,7 +332,6 @@ impl ImagineClient {
             s.upsert_result(&job)?;
         }
 
-        let cost = estimate::estimate_image(req.model, req.n);
         let mut payload = json!({
             "model": req.model.as_str(),
             "prompt": req.prompt,
@@ -308,7 +340,10 @@ impl ImagineClient {
         });
 
         if req.images.len() == 1 {
-            let field = self.media_ref_to_image_field(&req.images[0]).await?;
+            let field = match self.media_ref_to_image_field(&req.images[0]).await {
+                Ok(f) => f,
+                Err(e) => return self.fail_job_err(job, store, e),
+            };
             payload
                 .as_object_mut()
                 .unwrap()
@@ -316,7 +351,10 @@ impl ImagineClient {
         } else {
             let mut arr = Vec::new();
             for img in &req.images {
-                arr.push(self.media_ref_to_image_field(img).await?);
+                match self.media_ref_to_image_field(img).await {
+                    Ok(f) => arr.push(f),
+                    Err(e) => return self.fail_job_err(job, store, e),
+                }
             }
             payload
                 .as_object_mut()
@@ -336,6 +374,12 @@ impl ImagineClient {
                 .unwrap()
                 .insert("resolution".into(), json!(res));
         }
+        if let Some(q) = req.quality {
+            payload
+                .as_object_mut()
+                .unwrap()
+                .insert("quality".into(), json!(q.as_str()));
+        }
         if let Some(storage) = self.storage_options_json("imaginarium-edit.png") {
             payload
                 .as_object_mut()
@@ -344,18 +388,9 @@ impl ImagineClient {
         }
 
         let url = format!("{}/images/edits", self.base_url);
-        let resp = self
-            .http
-            .post(&url)
-            .headers(self.auth_headers())
-            .json(&payload)
-            .send()
+        let body_text = self
+            .post_image_json(&url, &payload, job.clone(), store)
             .await?;
-        let status = resp.status();
-        let body_text = resp.text().await?;
-        if !status.is_success() {
-            return self.fail_job(job, store, status.as_u16(), body_text);
-        }
 
         self.finalize_image_job(
             job,
@@ -377,15 +412,17 @@ impl ImagineClient {
         store: Option<&JobStore>,
         wait: bool,
     ) -> Result<JobResult> {
-        if req.image.is_some() && !req.reference_images.is_empty() {
+        if req.image.is_some()
+            && (!req.reference_images.is_empty() || !req.reference_audios.is_empty())
+        {
             return Err(Error::invalid_mode(
-                "cannot combine image (I2V) and reference_images (R2V) in one request",
+                "cannot combine image (I2V) with reference_images / reference_audios (R2V)",
             ));
         }
 
         let mode = if req.image.is_some() {
             VideoMode::ImageToVideo
-        } else if !req.reference_images.is_empty() {
+        } else if !req.reference_images.is_empty() || !req.reference_audios.is_empty() {
             VideoMode::ReferenceToVideo
         } else {
             VideoMode::TextToVideo
@@ -404,6 +441,7 @@ impl ImagineClient {
                         req.resolution.as_deref(),
                         req.duration,
                         req.reference_images.len(),
+                        req.reference_audios.len(),
                     )
                     .is_ok()
                 })
@@ -439,9 +477,12 @@ impl ImagineClient {
             req.resolution.as_deref(),
             req.duration,
             req.reference_images.len(),
+            req.reference_audios.len(),
         )?;
 
         let duration = req.duration.unwrap_or(8).clamp(1, 15);
+        let cost = estimate::estimate_video(model, duration);
+        self.check_spend(store, cost.estimated_usd)?;
         let prompt = req.prompt.clone().unwrap_or_default();
         let mut job =
             jobs::pending_job(JobMode::VideoGenerate, model.as_str(), Some(prompt.clone()));
@@ -490,6 +531,17 @@ impl ImagineClient {
                 .unwrap()
                 .insert("reference_images".into(), Value::Array(refs));
         }
+        if !req.reference_audios.is_empty() {
+            let audios: Vec<Value> = req
+                .reference_audios
+                .iter()
+                .map(|id| json!({ "voice_id": id }))
+                .collect();
+            payload
+                .as_object_mut()
+                .unwrap()
+                .insert("reference_audios".into(), Value::Array(audios));
+        }
         if let Some(storage) = self.storage_options_json("imaginarium-video.mp4") {
             payload
                 .as_object_mut()
@@ -509,7 +561,6 @@ impl ImagineClient {
             s.upsert_result(&job)?;
         }
 
-        let cost = estimate::estimate_video(model, duration);
         if wait {
             self.finish_video_job(job, &request_id, library, store, Some(cost.estimated_usd))
                 .await
@@ -540,6 +591,9 @@ impl ImagineClient {
                 model.as_str()
             )));
         }
+        // Edit duration unknown; rough mid estimate 6s of base video model.
+        let cost = estimate::estimate_video(model, 6);
+        self.check_spend(store, cost.estimated_usd)?;
 
         let mut job =
             jobs::pending_job(JobMode::VideoEdit, model.as_str(), Some(req.prompt.clone()));
@@ -570,8 +624,6 @@ impl ImagineClient {
             s.upsert_result(&job)?;
         }
 
-        // Edit duration unknown; rough mid estimate 6s of base video model.
-        let cost = estimate::estimate_video(model, 6);
         if wait {
             self.finish_video_job(job, &request_id, library, store, Some(cost.estimated_usd))
                 .await
@@ -603,6 +655,8 @@ impl ImagineClient {
             )));
         }
         let duration = req.duration.unwrap_or(6).clamp(2, 10);
+        let cost = estimate::estimate_video(model, duration);
+        self.check_spend(store, cost.estimated_usd)?;
 
         let mut job = jobs::pending_job(
             JobMode::VideoExtend,
@@ -640,7 +694,6 @@ impl ImagineClient {
             s.upsert_result(&job)?;
         }
 
-        let cost = estimate::estimate_video(model, duration);
         if wait {
             self.finish_video_job(job, &request_id, library, store, Some(cost.estimated_usd))
                 .await
@@ -920,9 +973,14 @@ impl ImagineClient {
             ));
         }
 
-        let job_dir = library.ensure_job_dir(&job.job_id)?;
+        let job_dir = match library.ensure_job_dir(&job.job_id) {
+            Ok(d) => d,
+            Err(e) => return self.fail_job_err(job, store, e),
+        };
         if let Some(p) = &job.prompt {
-            library.write_prompt(&job_dir, p)?;
+            if let Err(e) = library.write_prompt(&job_dir, p) {
+                return self.fail_job_err(job, store, e);
+            }
         }
 
         let download_url = public_url.clone().or_else(|| temporary_url.clone());
@@ -940,18 +998,27 @@ impl ImagineClient {
             }
         }
 
+        let content_url = local_path
+            .as_ref()
+            .map(|_| library::Library::content_url(&job.job_id, 0));
         let asset = Asset {
             id: AssetId::new(),
             kind: AssetKind::Video,
             local_path,
-            content_url: None,
+            content_url,
             upstream_url: temporary_url,
             file_id,
             public_url,
             mime_type: Some("video/mp4".into()),
         };
 
-        job.ok = true;
+        if self.auto_download && asset.local_path.is_none() {
+            job.ok = false;
+            job.error = Some("auto_download failed; asset kept as upstream url only".into());
+            job.error_type = Some("download".into());
+        } else {
+            job.ok = true;
+        }
         job.status = JobStatus::Done;
         job.assets = vec![asset];
         job.usage = Some(UsageInfo {
@@ -1007,7 +1074,7 @@ impl ImagineClient {
             let mut assets = Vec::new();
             for (i, item) in parsed.data.iter().enumerate() {
                 assets.push(
-                    self.materialize_image_asset(library, &job_dir, i, item)
+                    self.materialize_image_asset(&jid, &job_dir, i, item)
                         .await?,
                 );
             }
@@ -1021,7 +1088,14 @@ impl ImagineClient {
             Err(e) => return self.fail_job_err(job, store, e),
         };
 
-        job.ok = true;
+        let downloaded = assets.iter().any(|a| a.local_path.is_some());
+        if self.auto_download && !downloaded {
+            job.ok = false;
+            job.error = Some("auto_download failed; assets kept as upstream urls only".into());
+            job.error_type = Some("download".into());
+        } else {
+            job.ok = true;
+        }
         job.status = JobStatus::Done;
         job.assets = assets;
         job.usage = Some(UsageInfo {
@@ -1040,24 +1114,33 @@ impl ImagineClient {
 
     async fn materialize_image_asset(
         &self,
-        _library: &Library,
+        job_id: &JobId,
         job_dir: &Path,
         i: usize,
         item: &ImageApiItem,
     ) -> Result<Asset> {
         let asset_id = AssetId::new();
+        let dest = job_dir.join(format!("{:02}.png", i));
         let mut local_path = None;
         if self.auto_download {
             if let Some(url) = &item.url {
-                let dest = job_dir.join(format!("{:02}.png", i));
-                if library::download_url(&self.http, url, &dest).await.is_ok() {
-                    local_path = Some(dest.display().to_string());
+                match library::download_url(&self.http, url, &dest).await {
+                    Ok(_) => local_path = Some(dest.display().to_string()),
+                    Err(e) => tracing::warn!(
+                        job_id = %job_id,
+                        "image download failed for asset {i}: {e}"
+                    ),
                 }
             } else if let Some(b64) = &item.b64_json {
-                let dest = job_dir.join(format!("{:02}.png", i));
-                if let Ok(bytes) = base64::engine::general_purpose::STANDARD.decode(b64) {
-                    std::fs::write(&dest, bytes)?;
-                    local_path = Some(dest.display().to_string());
+                match base64::engine::general_purpose::STANDARD.decode(b64) {
+                    Ok(bytes) => {
+                        std::fs::write(&dest, bytes)?;
+                        local_path = Some(dest.display().to_string());
+                    }
+                    Err(e) => tracing::warn!(
+                        job_id = %job_id,
+                        "image b64 decode failed for asset {i}: {e}"
+                    ),
                 }
             }
         }
@@ -1065,13 +1148,56 @@ impl ImagineClient {
         Ok(Asset {
             id: asset_id,
             kind: AssetKind::Image,
+            content_url: local_path
+                .as_ref()
+                .map(|_| library::Library::content_url(job_id, i)),
             local_path,
-            content_url: None,
             upstream_url: item.url.clone(),
             file_id: file_output.and_then(|f| f.file_id.clone()),
             public_url: file_output.and_then(|f| f.public_url.clone()),
             mime_type: item.mime_type.clone(),
         })
+    }
+
+    /// POST an image payload. Transport / body-read failures mark the job Failed
+    /// so it is never left stranded in `running` with no upstream id.
+    async fn post_image_json(
+        &self,
+        url: &str,
+        payload: &Value,
+        job: JobResult,
+        store: Option<&JobStore>,
+    ) -> Result<String> {
+        let resp = match self
+            .http
+            .post(url)
+            .headers(self.auth_headers())
+            .json(payload)
+            .send()
+            .await
+        {
+            Ok(r) => r,
+            Err(e) => {
+                return self
+                    .fail_job_err(job, store, e.into())
+                    .map(|_| String::new());
+            }
+        };
+        let status = resp.status();
+        let body_text = match resp.text().await {
+            Ok(t) => t,
+            Err(e) => {
+                return self
+                    .fail_job_err(job, store, e.into())
+                    .map(|_| String::new());
+            }
+        };
+        if !status.is_success() {
+            return self
+                .fail_job(job, store, status.as_u16(), body_text)
+                .map(|_| String::new());
+        }
+        Ok(body_text)
     }
 
     fn fail_job(
@@ -1097,7 +1223,13 @@ impl ImagineClient {
         job.ok = false;
         job.status = JobStatus::Failed;
         job.error = Some(err.to_string());
-        job.error_type = Some("upstream".into());
+        job.error_type = Some(match &err {
+            Error::UpstreamTransport(_) => "transport".into(),
+            Error::SpendLimit(_) => "spend_limit".into(),
+            Error::InvalidMode(_) => "invalid_mode".into(),
+            Error::Serde(_) | Error::Other(_) => "parse".into(),
+            _ => "upstream".into(),
+        });
         job.completed_at = Some(Utc::now());
         if let Some(s) = store {
             let _ = s.upsert_result(&job);
@@ -1154,6 +1286,8 @@ pub fn models_table_json() -> Value {
         "image_aspect_ratios": models::IMAGE_ASPECT_RATIOS,
         "video_aspect_ratios": models::VIDEO_ASPECT_RATIOS,
         "image_resolutions": models::IMAGE_RESOLUTIONS,
+        "image_quality_levels": models::IMAGE_QUALITY_LEVELS,
         "video_resolutions": models::VIDEO_RESOLUTIONS,
+        "preset_voice_ids": models::PRESET_VOICE_IDS,
     })
 }

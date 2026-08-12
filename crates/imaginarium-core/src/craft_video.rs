@@ -25,8 +25,10 @@
 //! segment-local. Both render on every segment they touch — the historic
 //! "overlays only on clip 0" defect is unrepresentable in this pipeline.
 
+use std::io::Read;
 use std::path::{Path, PathBuf};
-use std::process::Stdio;
+use std::process::{Command, Stdio};
+use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -217,6 +219,16 @@ pub struct VideoTimeline {
 /// Hard cap on drawtext filters per segment — an unbounded caption list is an
 /// ffmpeg-filtergraph DoS vector (audit G4 follow-up).
 const MAX_CAPTIONS_PER_SEGMENT: usize = 32;
+/// Each canvas edge is clamped to this (4K). Stops a Write token asking for 32k².
+const MAX_CANVAS_EDGE: u32 = 4096;
+/// A timeline with hundreds of clips is an ffmpeg spawn/CPU bomb.
+const MAX_SEGMENTS: usize = 48;
+/// Still / title-card duration cap (seconds).
+const MAX_STILL_CARD_DUR_S: f64 = 30.0;
+/// Whole-piece master-clock cap (seconds).
+const MAX_MASTER_DUR_S: f64 = 20.0 * 60.0;
+/// Kill a wedged ffmpeg rather than hold the node forever.
+const FFMPEG_TIMEOUT: Duration = Duration::from_secs(300);
 
 /// Segment cache ceiling — oldest entries pruned past this.
 const SEGMENT_CACHE_MAX_BYTES: u64 = 2 * 1024 * 1024 * 1024;
@@ -456,8 +468,8 @@ fn resolve_canvas(tl: &VideoTimeline, first_clip: Option<&MediaProbe>) -> Canvas
         }
     };
     Canvas {
-        w: even_dim(w),
-        h: even_dim(h),
+        w: even_dim(w.min(MAX_CANVAS_EDGE)),
+        h: even_dim(h.min(MAX_CANVAS_EDGE)),
         fps,
     }
 }
@@ -641,6 +653,15 @@ fn plan_segments(
             tl.version
         )));
     }
+    if sources.is_empty() {
+        return Err(Error::other("timeline has no segments"));
+    }
+    if sources.len() > MAX_SEGMENTS {
+        return Err(Error::other(format!(
+            "timeline has {} segments; max is {MAX_SEGMENTS}",
+            sources.len()
+        )));
+    }
     let style = tl.style.clone().unwrap_or_default();
     if !(0.0..=0.45).contains(&style.letterbox_frac) {
         return Err(Error::other(
@@ -677,11 +698,12 @@ fn plan_segments(
                     .as_ref()
                     .ok_or_else(|| Error::other(format!("segment {i}: missing probe for clip")))?;
                 let in_s = clip.in_s.max(0.0);
-                let window = if clip.out_s > in_s {
-                    clip.out_s - in_s
+                let src_end = if clip.out_s > in_s {
+                    clip.out_s.min(probe.duration_s)
                 } else {
-                    probe.duration_s - in_s
+                    probe.duration_s
                 };
+                let window = src_end - in_s;
                 if window <= 0.05 {
                     return Err(Error::other(format!(
                         "segment {i} ({}): empty window — in_s {:.3} / out_s {:.3} against source duration {:.3}",
@@ -703,6 +725,12 @@ fn plan_segments(
                         } else {
                             "card"
                         }
+                    )));
+                }
+                if clip.dur_s > MAX_STILL_CARD_DUR_S {
+                    return Err(Error::other(format!(
+                        "segment {i}: dur_s {:.1}s exceeds the {MAX_STILL_CARD_DUR_S}s still/card cap",
+                        clip.dur_s
                     )));
                 }
                 if clip.kind == SegmentKind::Still
@@ -770,6 +798,11 @@ fn plan_segments(
         });
         cursor += dur;
     }
+    if cursor > MAX_MASTER_DUR_S {
+        return Err(Error::other(format!(
+            "timeline is {cursor:.1}s; max assembled duration is {MAX_MASTER_DUR_S}s"
+        )));
+    }
     Ok((plans, cursor))
 }
 
@@ -829,7 +862,9 @@ fn segment_args(plan: &SegmentPlan, canvas: Canvas, out: &Path) -> Vec<String> {
                 args.extend(["-ss".into(), format!("{:.3}", plan.in_s)]);
             }
             args.extend(["-i".into(), src.display().to_string()]);
-            args.extend(["-t".into(), format!("{:.3}", plan.src_window)]);
+            // -t after -i is OUTPUT duration. After setpts=PTS/speed the
+            // output length is plan.dur, not the source window.
+            args.extend(["-t".into(), format!("{:.3}", plan.dur)]);
             args.extend(["-vf".into(), segment_vf(plan, canvas)]);
         }
         SegmentKind::Still => {
@@ -1118,9 +1153,18 @@ fn segment_cache_key(plan: &SegmentPlan, canvas: Canvas) -> String {
         ));
     }
     for c in &plan.captions {
+        // Length-prefix the text so `|` inside a caption cannot collide with
+        // the field delimiter (`foo|1.000` vs text=`foo` start=1.000).
         s.push_str(&format!(
-            "|cap{}|{:.3}|{:.3}|{}|{}|{}|{}",
-            c.text, c.start_s, c.end_s, c.x, c.y, c.fontsize, c.color
+            "|cap{}:{}|{:.3}|{:.3}|{}|{}|{}|{}",
+            c.text.len(),
+            c.text,
+            c.start_s,
+            c.end_s,
+            c.x,
+            c.y,
+            c.fontsize,
+            c.color
         ));
     }
     let mut hasher = Sha256::new();
@@ -1128,9 +1172,20 @@ fn segment_cache_key(plan: &SegmentPlan, canvas: Canvas) -> String {
     hex::encode(hasher.finalize())
 }
 
-/// Prune oldest cache entries beyond the byte ceiling. Runs before a render so
-/// the render's own (newest) segments are never evicted mid-use.
-fn prune_segment_cache(dir: &Path, max_bytes: u64) {
+/// Serializes prune + cache hit/miss so two concurrent renders cannot unlink
+/// a file the other has already listed in concat.txt.
+static SEGMENT_CACHE_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+fn touch_mtime(path: &Path) {
+    let now = std::time::SystemTime::now();
+    if let Ok(f) = std::fs::OpenOptions::new().write(true).open(path) {
+        let _ = f.set_modified(now);
+    }
+}
+
+/// Prune oldest cache entries beyond the byte ceiling. Never unlinks a path
+/// in `keep` (this render's concat list).
+fn prune_segment_cache(dir: &Path, max_bytes: u64, keep: &std::collections::HashSet<PathBuf>) {
     let Ok(entries) = std::fs::read_dir(dir) else {
         return;
     };
@@ -1150,6 +1205,9 @@ fn prune_segment_cache(dir: &Path, max_bytes: u64) {
     files.sort_by_key(|(_, _, mtime)| *mtime);
     let mut excess = total - max_bytes;
     for (path, len, _) in files {
+        if keep.contains(&path) {
+            continue;
+        }
         if std::fs::remove_file(&path).is_ok() {
             info!(path = %path.display(), "pruned craft segment cache entry");
             excess = excess.saturating_sub(len);
@@ -1355,20 +1413,26 @@ fn render_plans(
     cache: &Path,
 ) -> Result<PathBuf> {
     std::fs::create_dir_all(cache)?;
-    prune_segment_cache(cache, SEGMENT_CACHE_MAX_BYTES);
+    let cached_paths: Vec<PathBuf> = plans
+        .iter()
+        .map(|plan| cache.join(format!("{}.mp4", segment_cache_key(plan, canvas))))
+        .collect();
+    let keep: std::collections::HashSet<PathBuf> = cached_paths.iter().cloned().collect();
+    let _cache_guard = SEGMENT_CACHE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    prune_segment_cache(cache, SEGMENT_CACHE_MAX_BYTES, &keep);
 
     let mut list_body = String::new();
-    for plan in plans {
-        let key = segment_cache_key(plan, canvas);
-        let cached = cache.join(format!("{key}.mp4"));
+    for (plan, cached) in plans.iter().zip(cached_paths.iter()) {
         if !cached.is_file() {
             // Render beside the final name, then rename — atomic within the
             // cache dir (a work-dir render + rename would cross filesystems).
+            let key = segment_cache_key(plan, canvas);
             let tmp = cache.join(format!("{key}.{}.part.mp4", ulid::Ulid::new()));
             run_ffmpeg(&segment_args(plan, canvas, &tmp))?;
-            std::fs::rename(&tmp, &cached)?;
+            std::fs::rename(&tmp, cached)?;
         } else {
-            info!(key = %key, "craft segment cache hit");
+            touch_mtime(cached);
+            info!(key = %cached.file_stem().unwrap_or_default().to_string_lossy(), "craft segment cache hit");
         }
         list_body.push_str(&format!("file '{}'\n", cached.display()));
     }
@@ -1455,17 +1519,43 @@ fn run_ffmpeg(args: &[String]) -> Result<()> {
 }
 
 /// Run ffmpeg; on success return its stderr (the loudnorm measure pass prints
-/// its JSON there), on failure surface a bounded stderr excerpt.
+/// its JSON there), on failure surface a bounded stderr excerpt. A wedged
+/// encode is killed after [`FFMPEG_TIMEOUT`] so a Write token cannot hang the node.
 fn run_ffmpeg_capture(args: &[String]) -> Result<String> {
     info!(?args, "ffmpeg craft");
-    let output = std::process::Command::new("ffmpeg")
+    let mut child = Command::new("ffmpeg")
         .args(args)
-        .stdout(Stdio::piped())
+        .stdout(Stdio::null())
         .stderr(Stdio::piped())
-        .output()
+        .spawn()
         .map_err(|e| Error::other(format!("spawn ffmpeg: {e}")))?;
-    let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
-    if !output.status.success() {
+    let mut stderr_pipe = child
+        .stderr
+        .take()
+        .ok_or_else(|| Error::other("ffmpeg stderr pipe missing"))?;
+    let drain = std::thread::spawn(move || {
+        let mut buf = Vec::new();
+        let _ = stderr_pipe.read_to_end(&mut buf);
+        buf
+    });
+    let start = Instant::now();
+    let status = loop {
+        match child.try_wait() {
+            Ok(Some(st)) => break st,
+            Ok(None) if start.elapsed() >= FFMPEG_TIMEOUT => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err(Error::other(format!(
+                    "ffmpeg timed out after {}s",
+                    FFMPEG_TIMEOUT.as_secs()
+                )));
+            }
+            Ok(None) => std::thread::sleep(Duration::from_millis(100)),
+            Err(e) => return Err(Error::other(format!("wait ffmpeg: {e}"))),
+        }
+    };
+    let stderr = String::from_utf8_lossy(&drain.join().unwrap_or_default()).into_owned();
+    if !status.success() {
         warn!(err = %stderr, "ffmpeg failed");
         return Err(Error::other(format!(
             "ffmpeg failed: {}",
@@ -1628,6 +1718,11 @@ mod tests {
         let tl = bare_timeline(vec![clip("01A", 0.0, 0.0)]);
         let c = resolve_canvas(&tl, Some(&probe(5.0, 1921, 1081, 30.0, false)));
         assert_eq!((c.w, c.h, c.fps), (1920, 1080, 30));
+        let mut huge = bare_timeline(vec![clip("01A", 0.0, 0.0)]);
+        huge.width = 16_000;
+        huge.height = 9_000;
+        let ch = resolve_canvas(&huge, None);
+        assert!(ch.w <= MAX_CANVAS_EDGE && ch.h <= MAX_CANVAS_EDGE);
         // explicit odd request also lands even
         let mut tl2 = bare_timeline(vec![clip("01A", 0.0, 0.0)]);
         tl2.width = 853;
@@ -1835,6 +1930,31 @@ mod tests {
     }
 
     #[test]
+    fn still_dur_and_segment_count_are_capped() {
+        let mut s = clip("01S", 0.0, 0.0);
+        s.kind = SegmentKind::Still;
+        s.dur_s = MAX_STILL_CARD_DUR_S + 1.0;
+        let tl = bare_timeline(vec![s]);
+        let err = plan_one(&tl, probe(6.0, 640, 360, 24.0, false)).unwrap_err();
+        assert!(err.to_string().contains("still/card cap"));
+
+        let many: Vec<_> = (0..MAX_SEGMENTS + 1)
+            .map(|i| clip(&format!("01{i:02}"), 0.0, 1.0))
+            .collect();
+        let tl2 = bare_timeline(many);
+        let err2 = plan_one(&tl2, probe(6.0, 640, 360, 24.0, false)).unwrap_err();
+        assert!(err2.to_string().contains("segments"));
+    }
+
+    #[test]
+    fn clip_out_s_clamps_to_source() {
+        let c = clip("01A", 0.0, 99.0);
+        let tl = bare_timeline(vec![c]);
+        let (plans, _) = plan_one(&tl, probe(6.0, 640, 360, 24.0, true)).unwrap();
+        assert!((plans[0].src_window - 6.0).abs() < 1e-9);
+    }
+
+    #[test]
     fn caption_cap_is_enforced() {
         let mut c = clip("01A", 0.0, 4.0);
         c.captions = (0..MAX_CAPTIONS_PER_SEGMENT + 1)
@@ -1871,6 +1991,14 @@ mod tests {
         assert_eq!(args[0], "-nostdin");
         assert!(args.contains(&"-an".to_string()));
         assert!(args.windows(2).any(|w| w[0] == "-t" && w[1] == "3.500"));
+        // speed ≠ 1: -t is OUTPUT duration (plan.dur), not the source window
+        let mut sped = test_plan(SegmentKind::Clip);
+        sped.speed = 2.0;
+        sped.dur = 1.75;
+        sped.src_window = 3.5;
+        let sargs = segment_args(&sped, CANVAS, Path::new("/w/fast.mp4"));
+        assert!(sargs.windows(2).any(|w| w[0] == "-t" && w[1] == "1.750"));
+        assert!(!sargs.windows(2).any(|w| w[0] == "-t" && w[1] == "3.500"));
         assert!(args.windows(2).any(|w| w[0] == "-ss" && w[1] == "1.000"));
         assert!(args
             .windows(2)
@@ -2028,6 +2156,26 @@ frame= 100 fps=0.0 q=-0.0 size=N/A time=00:00:04.00 bitrate=N/A speed= 512x
         let mut captioned = test_plan(SegmentKind::Card);
         captioned.captions = vec![overlay("hi", 0.0, 1.0)];
         assert_ne!(segment_cache_key(&captioned, CANVAS), k1);
+        // delimiter collision: text containing `|` must not match a split field
+        let mut a = test_plan(SegmentKind::Card);
+        a.captions = vec![overlay("foo|1.000", 0.0, 2.0)];
+        let mut b = test_plan(SegmentKind::Card);
+        b.captions = vec![overlay("foo", 1.0, 2.0)];
+        assert_ne!(segment_cache_key(&a, CANVAS), segment_cache_key(&b, CANVAS));
+    }
+
+    #[test]
+    fn prune_skips_paths_this_render_still_needs() {
+        let dir = tempfile::tempdir().unwrap();
+        let keep_p = dir.path().join("keep.mp4");
+        let drop_p = dir.path().join("drop.mp4");
+        std::fs::write(&keep_p, vec![0u8; 80]).unwrap();
+        std::fs::write(&drop_p, vec![0u8; 80]).unwrap();
+        let mut keep = std::collections::HashSet::new();
+        keep.insert(keep_p.clone());
+        prune_segment_cache(dir.path(), 50, &keep);
+        assert!(keep_p.is_file(), "in-use cache file must survive prune");
+        assert!(!drop_p.is_file(), "oldest unused file should be evicted");
     }
 
     #[test]

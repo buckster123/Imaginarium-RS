@@ -24,6 +24,8 @@ pub struct Config {
     pub server: ServerConfig,
     #[serde(default)]
     pub defaults: DefaultsConfig,
+    #[serde(default)]
+    pub limits: LimitsConfig,
     /// Resolved data home (not always serialized from file).
     #[serde(skip)]
     pub data_home: PathBuf,
@@ -99,6 +101,36 @@ pub struct DefaultsConfig {
     pub video_duration: u32,
 }
 
+/// Optional spend gates. `None` / omitted = unlimited.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct LimitsConfig {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_usd_per_job: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_usd_per_day: Option<f64>,
+}
+
+impl LimitsConfig {
+    /// Reject this job if it would exceed a configured cap.
+    pub fn check(&self, this_job_usd: f64, spent_today_usd: f64) -> Result<()> {
+        if let Some(max) = self.max_usd_per_job {
+            if max > 0.0 && this_job_usd > max {
+                return Err(Error::spend_limit(format!(
+                    "estimated ${this_job_usd:.4} exceeds max_usd_per_job ${max:.4}"
+                )));
+            }
+        }
+        if let Some(max) = self.max_usd_per_day {
+            if max > 0.0 && spent_today_usd + this_job_usd > max {
+                return Err(Error::spend_limit(format!(
+                    "estimated ${this_job_usd:.4} + ${spent_today_usd:.4} today exceeds max_usd_per_day ${max:.4}"
+                )));
+            }
+        }
+        Ok(())
+    }
+}
+
 impl Default for UpstreamConfig {
     fn default() -> Self {
         Self {
@@ -161,6 +193,7 @@ impl Default for Config {
             poll: PollConfig::default(),
             server: ServerConfig::default(),
             defaults: DefaultsConfig::default(),
+            limits: LimitsConfig::default(),
             data_home: PathBuf::new(),
             config_path: PathBuf::new(),
         }
@@ -198,7 +231,7 @@ fn default_image_model() -> String {
     "grok-imagine-image".into()
 }
 fn default_video_model() -> String {
-    "grok-imagine-video".into()
+    "grok-imagine-video-1.5".into()
 }
 fn default_i2v_model() -> String {
     "grok-imagine-video-1.5".into()
@@ -267,6 +300,7 @@ impl Config {
             poll: self.poll.clone(),
             server: self.server.clone(),
             defaults: self.defaults.clone(),
+            limits: self.limits.clone(),
         }
     }
 
@@ -337,4 +371,37 @@ pub struct ConfigFile {
     pub poll: PollConfig,
     pub server: ServerConfig,
     pub defaults: DefaultsConfig,
+    #[serde(default)]
+    pub limits: LimitsConfig,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn spend_caps_reject_overage_and_ignore_zero() {
+        let open = LimitsConfig::default();
+        assert!(open.check(99.0, 0.0).is_ok());
+
+        let per_job = LimitsConfig {
+            max_usd_per_job: Some(0.10),
+            max_usd_per_day: None,
+        };
+        assert!(per_job.check(0.04, 0.0).is_ok());
+        assert!(per_job.check(0.50, 0.0).is_err());
+
+        let daily = LimitsConfig {
+            max_usd_per_job: None,
+            max_usd_per_day: Some(1.00),
+        };
+        assert!(daily.check(0.40, 0.50).is_ok());
+        assert!(daily.check(0.40, 0.70).is_err());
+
+        let disabled = LimitsConfig {
+            max_usd_per_job: Some(0.0),
+            max_usd_per_day: Some(0.0),
+        };
+        assert!(disabled.check(99.0, 99.0).is_ok());
+    }
 }

@@ -12,7 +12,9 @@ use imaginarium_core::config::Config;
 use imaginarium_core::estimate::{self, CostEstimate};
 use imaginarium_core::jobs::JobStore;
 use imaginarium_core::library::{media_from_local_input, Library};
-use imaginarium_core::models::{self, ModelId};
+use imaginarium_core::models::{
+    self, parse_optional_image_quality, parse_reference_audios, ModelId,
+};
 use imaginarium_core::types::MediaRef;
 use imaginarium_core::{DEFAULT_BIND, PRODUCT, VERSION};
 use tracing_subscriber::EnvFilter;
@@ -127,6 +129,9 @@ enum ImageCmd {
         aspect_ratio: Option<String>,
         #[arg(long = "res")]
         resolution: Option<String>,
+        /// Image 2.0 only: low | medium (omit for upstream default medium)
+        #[arg(long)]
+        quality: Option<String>,
         #[arg(long, value_enum, default_value_t = CliResponseFormat::Url)]
         format: CliResponseFormat,
         #[arg(long)]
@@ -147,6 +152,9 @@ enum ImageCmd {
         aspect_ratio: Option<String>,
         #[arg(long = "res")]
         resolution: Option<String>,
+        /// Image 2.0 only: low | medium (omit for upstream default medium)
+        #[arg(long)]
+        quality: Option<String>,
         #[arg(long, value_enum, default_value_t = CliResponseFormat::Url)]
         format: CliResponseFormat,
         #[arg(long)]
@@ -156,7 +164,7 @@ enum ImageCmd {
 
 #[derive(Subcommand, Debug)]
 enum VideoCmd {
-    /// Text-to-video
+    /// Text-to-video (or voice-only R2V when --voice is set)
     Gen {
         #[arg(short = 'p', long)]
         prompt: String,
@@ -168,6 +176,9 @@ enum VideoCmd {
         aspect_ratio: Option<String>,
         #[arg(long = "res")]
         resolution: Option<String>,
+        /// Video 1.5 preset voice_id (repeatable, max 3). Makes this R2V.
+        #[arg(long = "voice")]
+        voices: Vec<String>,
         /// Submit and return immediately (poll with status/wait)
         #[arg(long)]
         no_wait: bool,
@@ -193,7 +204,7 @@ enum VideoCmd {
         #[arg(long)]
         json: bool,
     },
-    /// Reference-to-video (one or more --ref images)
+    /// Reference-to-video (one or more --ref images; optional --voice)
     Ref {
         #[arg(short = 'p', long)]
         prompt: String,
@@ -207,6 +218,9 @@ enum VideoCmd {
         aspect_ratio: Option<String>,
         #[arg(long = "res")]
         resolution: Option<String>,
+        /// Video 1.5 preset voice_id (repeatable, max 3). Tag as <AUDIO_0>…
+        #[arg(long = "voice")]
+        voices: Vec<String>,
         #[arg(long)]
         no_wait: bool,
         #[arg(long)]
@@ -452,10 +466,12 @@ async fn main() -> Result<()> {
                     n,
                     aspect_ratio,
                     resolution,
+                    quality,
                     format,
                     json,
                 } => {
                     let model = ModelId::parse(model)?;
+                    let quality = parse_optional_image_quality(quality.as_deref())?;
                     let result = client
                         .image_generate(
                             ImageGenerateRequest {
@@ -466,6 +482,7 @@ async fn main() -> Result<()> {
                                 resolution: resolution
                                     .clone()
                                     .or_else(|| Some(cfg.defaults.image_resolution.clone())),
+                                quality,
                                 response_format: (*format).into(),
                             },
                             &library,
@@ -498,10 +515,12 @@ async fn main() -> Result<()> {
                     n,
                     aspect_ratio,
                     resolution,
+                    quality,
                     format,
                     json,
                 } => {
                     let model = ModelId::parse(model)?;
+                    let quality = parse_optional_image_quality(quality.as_deref())?;
                     let refs: Vec<MediaRef> = images
                         .iter()
                         .map(|s| media_from_local_input(s, &cfg.library_dir()))
@@ -515,6 +534,7 @@ async fn main() -> Result<()> {
                                 n: *n,
                                 aspect_ratio: aspect_ratio.clone(),
                                 resolution: resolution.clone(),
+                                quality,
                                 response_format: (*format).into(),
                             },
                             &library,
@@ -542,6 +562,7 @@ async fn main() -> Result<()> {
                     duration,
                     aspect_ratio,
                     resolution,
+                    voices,
                     no_wait,
                     json,
                 } => {
@@ -549,6 +570,7 @@ async fn main() -> Result<()> {
                     let library = Library::new(cfg.library_dir());
                     let store = JobStore::open(&cfg.db_path())?;
                     let (model, explicit) = parse_optional_model(model.as_deref())?;
+                    let reference_audios = parse_reference_audios(voices)?;
                     let result = client
                         .video_generate(
                             VideoGenerateRequest {
@@ -557,6 +579,7 @@ async fn main() -> Result<()> {
                                 explicit_model: explicit,
                                 image: None,
                                 reference_images: vec![],
+                                reference_audios,
                                 duration: Some(*duration),
                                 aspect_ratio: aspect_ratio.clone().or_else(|| Some("16:9".into())),
                                 resolution: resolution
@@ -593,6 +616,7 @@ async fn main() -> Result<()> {
                                 explicit_model: explicit,
                                 image: Some(media_from_local_input(image, &cfg.library_dir())),
                                 reference_images: vec![],
+                                reference_audios: vec![],
                                 duration: Some(*duration),
                                 aspect_ratio: aspect_ratio.clone(),
                                 resolution: resolution.clone(),
@@ -612,6 +636,7 @@ async fn main() -> Result<()> {
                     duration,
                     aspect_ratio,
                     resolution,
+                    voices,
                     no_wait,
                     json,
                 } => {
@@ -623,6 +648,7 @@ async fn main() -> Result<()> {
                         .iter()
                         .map(|s| media_from_local_input(s, &cfg.library_dir()))
                         .collect();
+                    let reference_audios = parse_reference_audios(voices)?;
                     let result = client
                         .video_generate(
                             VideoGenerateRequest {
@@ -631,6 +657,7 @@ async fn main() -> Result<()> {
                                 explicit_model: explicit,
                                 image: None,
                                 reference_images: refs,
+                                reference_audios,
                                 duration: Some(*duration),
                                 aspect_ratio: aspect_ratio.clone().or_else(|| Some("16:9".into())),
                                 resolution: resolution
@@ -819,7 +846,9 @@ async fn main() -> Result<()> {
                 }
             }
         }
-        Commands::Mcp { proxy } => {
+        Commands::Mcp { ref proxy } => {
+            // Apply --config / --data-home before MCP's own Config::load().
+            let _cfg = load_cfg(&cli)?;
             // Logs must stay on stderr; this takes over stdio for JSON-RPC.
             imaginarium_mcp::run(proxy.clone()).await?;
         }
