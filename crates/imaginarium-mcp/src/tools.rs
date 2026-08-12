@@ -154,7 +154,7 @@ pub fn all_tool_schemas() -> Vec<Value> {
             json!({
                 "type": "object",
                 "properties": {
-                    "limit": { "type": "integer", "default": 20 }
+                    "limit": { "type": "integer", "default": 20, "minimum": 1, "maximum": 100, "description": "Capped at 100." }
                 }
             }),
         ),

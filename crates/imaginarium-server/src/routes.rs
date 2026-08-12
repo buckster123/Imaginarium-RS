@@ -391,7 +391,7 @@ async fn jobs_list(State(state): State<AppState>, Query(q): Query<ListQuery>) ->
         Ok(j) => j,
         Err(e) => return err_response(StatusCode::INTERNAL_SERVER_ERROR, e),
     };
-    match jobs.list_recent(q.limit.unwrap_or(20)) {
+    match jobs.list_recent(q.limit.unwrap_or(imaginarium_core::jobs::JOB_LIST_DEFAULT)) {
         Ok(items) => Json(items).into_response(),
         Err(e) => err_response(StatusCode::INTERNAL_SERVER_ERROR, e),
     }

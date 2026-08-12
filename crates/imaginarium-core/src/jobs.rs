@@ -15,6 +15,17 @@ pub struct JobStore {
     conn: Mutex<Connection>,
 }
 
+pub const JOB_LIST_DEFAULT: usize = 20;
+pub const JOB_LIST_MAX: usize = 100;
+
+/// 0 → default 20. Anything above [`JOB_LIST_MAX`] is capped (HTTP/CLI/MCP).
+pub fn sanitize_job_list_limit(limit: usize) -> usize {
+    match limit {
+        0 => JOB_LIST_DEFAULT,
+        n => n.min(JOB_LIST_MAX),
+    }
+}
+
 impl JobStore {
     pub fn open(path: &Path) -> Result<Self> {
         if let Some(parent) = path.parent() {
@@ -102,6 +113,7 @@ impl JobStore {
     }
 
     pub fn list_recent(&self, limit: usize) -> Result<Vec<JobListItem>> {
+        let limit = sanitize_job_list_limit(limit);
         let conn = self.conn.lock().map_err(|e| Error::Db(e.to_string()))?;
         let mut stmt = conn.prepare(
             r#"
@@ -257,5 +269,13 @@ mod tests {
         let since = Utc::now() - chrono::Duration::hours(1);
         let sum = store.estimated_spend_since(since).unwrap();
         assert!((sum - 0.04).abs() < 1e-9, "failed jobs must not count");
+    }
+
+    #[test]
+    fn job_list_limit_is_capped() {
+        assert_eq!(sanitize_job_list_limit(0), JOB_LIST_DEFAULT);
+        assert_eq!(sanitize_job_list_limit(20), 20);
+        assert_eq!(sanitize_job_list_limit(100), JOB_LIST_MAX);
+        assert_eq!(sanitize_job_list_limit(10_000), JOB_LIST_MAX);
     }
 }
