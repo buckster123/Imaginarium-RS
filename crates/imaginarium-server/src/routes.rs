@@ -85,17 +85,21 @@ struct EstimateBody {
     model: Option<String>,
     n: Option<u32>,
     duration: Option<u32>,
+    /// Video only: 480p | 720p | 1080p. Omitted → 720p (studio/config default).
+    resolution: Option<String>,
 }
 
 async fn estimate_handler(Json(body): Json<EstimateBody>) -> Response {
     let mid = match parse_model_selector(body.model.as_deref()) {
         Ok(Some(m)) => m,
-        Ok(None) if body.kind == "video" => ModelId::Video,
+        Ok(None) if body.kind == "video" => ModelId::Video15,
         Ok(None) => ModelId::Image,
         Err(e) => return err_response(StatusCode::BAD_REQUEST, e),
     };
     let est = match body.kind.as_str() {
-        "video" => estimate::estimate_video(mid, body.duration.unwrap_or(8)),
+        "video" => {
+            estimate::estimate_video(mid, body.duration.unwrap_or(8), body.resolution.as_deref())
+        }
         _ => estimate::estimate_image(mid, body.n.unwrap_or(1)),
     };
     Json(est).into_response()

@@ -288,7 +288,12 @@ async function refreshEstimate() {
       model.value ||
       (mode.value === 'edit' || mode.value === 'extend' ? 'video' : '1.5')
     const d = mode.value === 'extend' ? extDuration.value : duration.value
-    estimate.value = await api.estimate({ kind: 'video', model: m, duration: d })
+    estimate.value = await api.estimate({
+      kind: 'video',
+      model: m,
+      duration: d,
+      resolution: resolution.value || undefined,
+    })
   } catch {
     estimate.value = null
   }

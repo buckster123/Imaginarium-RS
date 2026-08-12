@@ -108,10 +108,12 @@ enum EstimateCmd {
         n: u32,
     },
     Video {
-        #[arg(long, default_value = "video")]
+        #[arg(long, default_value = "1.5")]
         model: String,
         #[arg(long, default_value_t = 8)]
         duration: u32,
+        #[arg(long = "res")]
+        resolution: Option<String>,
     },
 }
 
@@ -349,9 +351,14 @@ fn load_cfg(cli: &Cli) -> Result<Config> {
 }
 
 fn print_estimate(e: &CostEstimate) {
+    let res = e
+        .resolution
+        .as_deref()
+        .map(|r| format!("  res={r}"))
+        .unwrap_or_default();
     println!(
-        "model={}  units={} {}  ≈ ${:.4}  ({})",
-        e.model, e.units, e.unit, e.estimated_usd, e.note
+        "model={}{}  units={} {}  ≈ ${:.4}  ({})",
+        e.model, res, e.units, e.unit, e.estimated_usd, e.note
     );
 }
 
@@ -449,9 +456,17 @@ async fn main() -> Result<()> {
                 let m = ModelId::parse(&model)?;
                 print_estimate(&estimate::estimate_image(m, n));
             }
-            EstimateCmd::Video { model, duration } => {
+            EstimateCmd::Video {
+                model,
+                duration,
+                resolution,
+            } => {
                 let m = ModelId::parse(&model)?;
-                print_estimate(&estimate::estimate_video(m, duration));
+                print_estimate(&estimate::estimate_video(
+                    m,
+                    duration,
+                    resolution.as_deref(),
+                ));
             }
         },
         Commands::Image(ref cmd) => {

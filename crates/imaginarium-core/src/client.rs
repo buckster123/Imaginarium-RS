@@ -501,7 +501,7 @@ impl ImagineClient {
         )?;
 
         let duration = req.duration.unwrap_or(8).clamp(1, 15);
-        let cost = estimate::estimate_video(model, duration);
+        let cost = estimate::estimate_video(model, duration, req.resolution.as_deref());
         self.check_rate()?;
         self.check_spend(store, cost.estimated_usd)?;
         let prompt = req.prompt.clone().unwrap_or_default();
@@ -612,8 +612,8 @@ impl ImagineClient {
                 model.as_str()
             )));
         }
-        // Edit duration unknown; rough mid estimate 6s of base video model.
-        let cost = estimate::estimate_video(model, 6);
+        // Edit duration unknown; rough mid estimate 6s. No res on the request — assume 720p.
+        let cost = estimate::estimate_video(model, 6, Some("720p"));
         self.check_rate()?;
         self.check_spend(store, cost.estimated_usd)?;
 
@@ -677,7 +677,7 @@ impl ImagineClient {
             )));
         }
         let duration = req.duration.unwrap_or(6).clamp(2, 10);
-        let cost = estimate::estimate_video(model, duration);
+        let cost = estimate::estimate_video(model, duration, Some("720p"));
         self.check_rate()?;
         self.check_spend(store, cost.estimated_usd)?;
 
@@ -1050,6 +1050,7 @@ impl ImagineClient {
                     estimate::estimate_video(
                         ModelId::parse(&job.model).unwrap_or(ModelId::Video),
                         d.ceil() as u32,
+                        None,
                     )
                     .estimated_usd
                 })

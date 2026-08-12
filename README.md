@@ -81,7 +81,7 @@ Capability matrix lives once in `imaginarium-core::models` and is consumed by CL
 | `grok-imagine-image-quality` | text→image, edit | 2k | ~$0.05 / image |
 | `grok-imagine-image-2.0` | text→image, edit | 2k | ~$0.04 / image |
 | `grok-imagine-video` | T2V · I2V · R2V · edit · extend | 720p | ~$0.05 / sec |
-| `grok-imagine-video-1.5` | T2V · I2V · R2V (+ preset voices) | **1080p** (T2V/I2V; R2V 720p) | ~$0.08 / sec |
+| `grok-imagine-video-1.5` | T2V · I2V · R2V (+ preset voices) | **1080p** (T2V/I2V; R2V 720p) | ~$0.08 / $0.14 / $0.25 per sec (480/720/1080p) |
 
 Aliases: `image`, `quality`, `2.0` (also `image-2.0`). Image 2.0 accepts an optional `quality` of `low` or `medium` (upstream default `medium`) — CLI `--quality`, HTTP/MCP `quality`. That field is rejected on the older image models.
 

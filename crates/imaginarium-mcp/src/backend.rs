@@ -26,6 +26,7 @@ pub trait Backend: Send + Sync {
         model: Option<&str>,
         n: u32,
         duration: u32,
+        resolution: Option<&str>,
     ) -> Result<Value>;
     async fn image_generate(&self, args: &Value) -> Result<Value>;
     async fn image_edit(&self, args: &Value) -> Result<Value>;
@@ -91,11 +92,12 @@ impl Backend for LocalBackend {
         model: Option<&str>,
         n: u32,
         duration: u32,
+        resolution: Option<&str>,
     ) -> Result<Value> {
-        let def = if kind == "video" { "video" } else { "image" };
+        let def = if kind == "video" { "1.5" } else { "image" };
         let m = parse_model(model, def)?;
         let e = if kind == "video" {
-            estimate::estimate_video(m, duration)
+            estimate::estimate_video(m, duration, resolution)
         } else {
             estimate::estimate_image(m, n)
         };
@@ -443,6 +445,7 @@ impl Backend for ProxyBackend {
         model: Option<&str>,
         n: u32,
         duration: u32,
+        resolution: Option<&str>,
     ) -> Result<Value> {
         self.post(
             "/v1/estimate",
@@ -450,7 +453,8 @@ impl Backend for ProxyBackend {
                 "kind": kind,
                 "model": model,
                 "n": n,
-                "duration": duration
+                "duration": duration,
+                "resolution": resolution,
             }),
         )
         .await

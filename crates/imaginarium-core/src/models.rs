@@ -202,7 +202,7 @@ static CATALOG: [ModelInfo; 5] = [
         id: "grok-imagine-video-1.5",
         display: "Grok Imagine Video 1.5",
         kind: "video",
-        notes: "T2V, I2V, R2V. 1080p on T2V/I2V; R2V + voices cap 720p. Preset voice_id via reference_audios (max 3).",
+        notes: "T2V, I2V, R2V. 1080p on T2V/I2V; R2V + voices cap 720p. Preset voice_id via reference_audios (max 3). Output ~$0.08/0.14/0.25 per s at 480/720/1080p.",
         approx_usd_unit: 0.08,
         unit: "second",
         capabilities: ModelCapabilities {

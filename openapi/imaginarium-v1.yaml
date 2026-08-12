@@ -183,9 +183,10 @@ paths:
               type: object
               properties:
                 kind: { type: string, enum: [image, video] }
-                model: { type: string, description: "concrete model, or \"auto\"/omit for the default" }
+                model: { type: string, description: "concrete model, or \"auto\"/omit for the default (video → grok-imagine-video-1.5)" }
                 n: { type: integer }
                 duration: { type: integer }
+                resolution: { type: string, enum: [480p, 720p, 1080p], description: "Video only. Omitted → 720p (studio/config default, not the 480p floor)." }
       responses:
         "200": { description: Estimate JSON }
 

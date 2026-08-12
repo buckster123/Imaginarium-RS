@@ -18,7 +18,8 @@ pub fn all_tool_schemas() -> Vec<Value> {
                     "kind": { "type": "string", "enum": ["image", "video"] },
                     "model": { "type": "string", "description": "Model id or alias (image, quality, 2.0, video, 1.5)" },
                     "n": { "type": "integer", "description": "Image count" },
-                    "duration": { "type": "integer", "description": "Video seconds" }
+                    "duration": { "type": "integer", "description": "Video seconds" },
+                    "resolution": { "type": "string", "enum": ["480p", "720p", "1080p"], "description": "Video only. Omitted → 720p (not the 480p floor)." }
                 },
                 "required": ["kind"]
             }),
