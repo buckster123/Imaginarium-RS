@@ -10,7 +10,7 @@ info:
       - `Authorization: Bearer <token>`
       - `X-Imaginarium-Token: <token>`
       - `?token=<token>` query parameter (for browsers / `<img>`/`<video>` sources)
-    Token scopes: `read` (GET + job wait), `write` (create jobs, import, craft),
+    Token scopes: `read` (GET + job wait + estimate), `write` (create jobs, import, craft),
     `admin` (token management + everything). The env/config node token is admin.
     The upstream xAI key stays on the node and is never returned by the API.
 

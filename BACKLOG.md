@@ -72,8 +72,7 @@ Track-it and rematch leftovers. Not blockers for LAN loopback.
 - [ ] One invalid UTF-8 byte on stdin kills the MCP session. `mcp/transport.rs`
 - [ ] Oversized MCP frame answered with a null-id error. `mcp/transport.rs`
 - [ ] A stray file in a job dir can make asset lookup miss. library walk
-- [ ] `POST /v1/estimate` is Write-scoped; `POST …/wait` is Read-scoped though it
-      polls + writes disk. Scope-map tidy. `auth.rs`
+- [x] `POST /v1/estimate` is Read-scoped (no spend). Wait stays Read, same as GET poll. `auth.rs`
 - [x] MCP `model:"auto"` on local video generate/edit/extend uses `parse_model_selector`.
 
 ---

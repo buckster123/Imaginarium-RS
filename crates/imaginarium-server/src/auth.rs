@@ -112,11 +112,32 @@ fn required_scope(path: &str, method: &str) -> TokenScope {
     if method.eq_ignore_ascii_case("GET") || method.eq_ignore_ascii_case("HEAD") {
         return TokenScope::Read;
     }
-    // POST wait is read-ish but still a job action — allow write
-    if path.contains("/wait") {
+    // Estimate spends nothing. Wait only advances an existing job — same as
+    // GET /v1/jobs/{id} polling — so a Read token can do both.
+    if path == "/v1/estimate" || path.contains("/wait") {
         return TokenScope::Read;
     }
     TokenScope::Write
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn estimate_and_wait_are_read() {
+        assert_eq!(required_scope("/v1/estimate", "POST"), TokenScope::Read);
+        assert_eq!(
+            required_scope("/v1/jobs/abc/wait", "POST"),
+            TokenScope::Read
+        );
+        assert_eq!(required_scope("/v1/jobs", "GET"), TokenScope::Read);
+        assert_eq!(
+            required_scope("/v1/images/generations", "POST"),
+            TokenScope::Write
+        );
+        assert_eq!(required_scope("/v1/tokens", "POST"), TokenScope::Admin);
+    }
 }
 
 pub async fn health() -> impl IntoResponse {
