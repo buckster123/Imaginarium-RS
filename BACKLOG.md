@@ -66,7 +66,7 @@ Track-it and rematch leftovers. Not blockers for LAN loopback.
 - [x] `video_extend` rejects duration outside 2–10 (no silent clamp). `models.rs`
 - [ ] Image AR / resolution / model not fully validated against the matrix. `models.rs`
 - [x] Jobs list `limit` capped at 100 (0 → 20) in `list_recent`. `jobs.rs`
-- [ ] `auth_headers()` panics on a control char in the API key. `client.rs`
+- [x] `auth_headers()` returns Config error on a control char in the API key (no panic). `client.rs`
 - [ ] `library_content` buffers the whole asset in RAM. `routes.rs`
 - [ ] MCP `initialize` only on the first frame; re-init breaks the handshake. `mcp/lib.rs`
 - [ ] One invalid UTF-8 byte on stdin kills the MCP session. `mcp/transport.rs`

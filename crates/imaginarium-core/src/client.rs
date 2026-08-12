@@ -5,7 +5,7 @@ use std::time::Duration;
 
 use base64::Engine as _;
 use chrono::Utc;
-use reqwest::header::{HeaderMap, AUTHORIZATION, CONTENT_TYPE, USER_AGENT};
+use reqwest::header::{HeaderMap, HeaderValue, AUTHORIZATION, CONTENT_TYPE, USER_AGENT};
 use reqwest::Client;
 use serde::Deserialize;
 use serde_json::{json, Value};
@@ -179,17 +179,16 @@ impl ImagineClient {
         self.limits.check(this_job_usd, spent_today)
     }
 
-    pub(crate) fn auth_headers(&self) -> HeaderMap {
+    pub(crate) fn auth_headers(&self) -> Result<HeaderMap> {
         let mut h = HeaderMap::new();
-        h.insert(
-            AUTHORIZATION,
-            format!("Bearer {}", self.api_key)
-                .parse()
-                .expect("api key header"),
-        );
-        h.insert(CONTENT_TYPE, "application/json".parse().unwrap());
-        h.insert(USER_AGENT, USER_AGENT_VALUE.parse().unwrap());
-        h
+        let auth = format!("Bearer {}", self.api_key);
+        let auth = HeaderValue::from_str(&auth).map_err(|_| {
+            Error::config("API key contains characters that are illegal in an HTTP header")
+        })?;
+        h.insert(AUTHORIZATION, auth);
+        h.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
+        h.insert(USER_AGENT, HeaderValue::from_static(USER_AGENT_VALUE));
+        Ok(h)
     }
 
     pub(crate) fn storage_options_json(&self, filename: &str) -> Option<Value> {
@@ -840,10 +839,11 @@ impl ImagineClient {
     async fn submit_video(&self, endpoint: &str, payload: Value) -> Result<String> {
         let url = format!("{}/videos/{endpoint}", self.base_url);
         debug!(%url, "POST video {endpoint}");
-        let mut headers = self.auth_headers();
+        let mut headers = self.auth_headers()?;
         headers.insert(
             "x-idempotency-key",
-            Ulid::new().to_string().parse().unwrap(),
+            HeaderValue::from_str(&Ulid::new().to_string())
+                .expect("ULID is a valid HTTP header value"),
         );
         let resp = self
             .http
@@ -872,7 +872,7 @@ impl ImagineClient {
         let resp = self
             .http
             .get(&url)
-            .headers(self.auth_headers())
+            .headers(self.auth_headers()?)
             .send()
             .await?;
         let status = resp.status();
@@ -1211,7 +1211,7 @@ impl ImagineClient {
         let resp = match self
             .http
             .post(url)
-            .headers(self.auth_headers())
+            .headers(self.auth_headers()?)
             .json(payload)
             .send()
             .await
@@ -1397,6 +1397,19 @@ mod tests {
             asset.upstream_url.as_deref(),
             Some("https://imgen.example/ephemeral.png")
         );
+    }
+
+    #[test]
+    fn auth_headers_rejects_control_chars_instead_of_panicking() {
+        let mut client = dummy_client(true);
+        client.api_key = "sk-\n-oops".into();
+        let err = client.auth_headers().unwrap_err();
+        assert!(
+            matches!(err, Error::Config(_)),
+            "expected Config error, got {err}"
+        );
+        client.api_key = "sk-clean".into();
+        assert!(client.auth_headers().is_ok());
     }
 
     #[test]
