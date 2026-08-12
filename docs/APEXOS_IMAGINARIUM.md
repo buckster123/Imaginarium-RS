@@ -120,11 +120,12 @@ Full route/param/auth reference: **`openapi/imaginarium-v1.yaml`** (rematched to
 - **Media fields** (`image`, `images[]`, `reference_images`, `video`) accept `library:{job_id}` (a node-library chain ref, resolved server-side — the **preferred** form for chaining a previous generation; `#n` addresses batch asset n), plus `data:` / `http(s):` / `file_…`. A bare local filesystem path is rejected (`400`); local paths work only via the CLI.
 - **Multi-asset batches**: `GET /v1/library/{id}/content?i=N` addresses the N-th asset of an n>1 image job (default 0). `GET /v1/jobs` rows carry `prompt` + `assets` (count) so galleries need no N+1 detail fetches.
 - **`content_url`** is set only when the node stored the file. Download miss is `Done` + `ok=false` + `error_type=download` (`content_url` null; `upstream_url` may still work).
-- **Spend caps** (`[limits] max_usd_per_job` / `max_usd_per_day`) return HTTP 400 + `error_type=spend_limit`. Per-token rate limiting is **not** shipped.
+- **Spend caps** (`[limits] max_usd_per_job` / `max_usd_per_day`) return HTTP 400 + `error_type=spend_limit`.
+- **Paid-request rate limit** (token bucket, default 30/min burst 10; `paid_rpm = 0` off) applies per minted token and the node env token on image/video generate/edit/extend only. HTTP **429** + `Retry-After` + `error_type=rate_limit`. Polls / wait / craft / import / estimate are not counted. Localhost-bypass is not throttled.
 
 ### Not in v1 — planned, do NOT build against yet
 
-These appear in `docs/ARCHITECTURE.md` but are **not implemented**: SSE job events (`GET /v1/jobs/{id}/events`), library listing / get / delete / upload (`GET`/`DELETE /v1/library`, `GET /v1/library/{id}`, `POST /v1/library/upload`), a standalone video poll route (`GET /v1/videos/{id}`), and per-token rate limits. Spend caps **are** implemented as optional `[limits] max_usd_per_job` / `max_usd_per_day` in config. For v1 the ApexOS surface should **poll `GET /v1/jobs/{id}`** (or `POST …/wait`) rather than expect SSE, and treat library assets via `GET /v1/library/{id}/content`.
+These appear in `docs/ARCHITECTURE.md` but are **not implemented**: SSE job events (`GET /v1/jobs/{id}/events`), library listing / get / delete / upload (`GET`/`DELETE /v1/library`, `GET /v1/library/{id}`, `POST /v1/library/upload`), and a standalone video poll route (`GET /v1/videos/{id}`). Spend caps and per-token paid-request rate limits **are** implemented (`[limits]`). For v1 the ApexOS surface should **poll `GET /v1/jobs/{id}`** (or `POST …/wait`) rather than expect SSE, treat library assets via `GET /v1/library/{id}/content`, and honor HTTP 429 + `Retry-After` on generate/edit/extend.
 
 ### Slint patterns (already in ApexOS)
 

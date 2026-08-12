@@ -3,13 +3,34 @@
 use std::net::SocketAddr;
 
 use axum::extract::{ConnectInfo, Request, State};
+use axum::http::header::RETRY_AFTER;
 use axum::http::StatusCode;
 use axum::middleware::Next;
 use axum::response::{IntoResponse, Response};
+use axum::Json;
+use imaginarium_core::rate_limit::is_paid_upstream;
 use imaginarium_core::tokens::{extract_presented_token, AuthIdentity, TokenScope};
 use imaginarium_core::{PRODUCT, VERSION};
+use serde_json::json;
 
 use crate::AppState;
+
+pub(crate) fn rate_limit_response(retry_after_s: u64) -> Response {
+    let mut res = (
+        StatusCode::TOO_MANY_REQUESTS,
+        Json(json!({
+            "ok": false,
+            "error_type": "rate_limit",
+            "error": format!("paid-request rate limit — retry in {retry_after_s}s"),
+            "retry_after_s": retry_after_s,
+        })),
+    )
+        .into_response();
+    if let Ok(val) = retry_after_s.to_string().parse() {
+        res.headers_mut().insert(RETRY_AFTER, val);
+    }
+    res
+}
 
 #[derive(Clone)]
 #[allow(dead_code)] // reserved for handlers that need identity
@@ -41,11 +62,20 @@ pub async fn require_auth(State(state): State<AppState>, mut req: Request, next:
             }
         };
         if let Some(id) = identity {
-            if id.scope.allows(required) {
-                req.extensions_mut().insert(RequestAuth(id));
-                return next.run(req).await;
+            if !id.scope.allows(required) {
+                return (StatusCode::FORBIDDEN, "insufficient token scope").into_response();
             }
-            return (StatusCode::FORBIDDEN, "insufficient token scope").into_response();
+            if is_paid_upstream(req.method().as_str(), req.uri().path()) {
+                if let (Some(lim), Some(key)) = (state.rate_limiter.as_ref(), id.rate_key()) {
+                    if let Err(imaginarium_core::Error::RateLimit { retry_after_s }) =
+                        lim.check(&key)
+                    {
+                        return rate_limit_response(retry_after_s);
+                    }
+                }
+            }
+            req.extensions_mut().insert(RequestAuth(id));
+            return next.run(req).await;
         }
         return (StatusCode::UNAUTHORIZED, "invalid or missing token").into_response();
     }

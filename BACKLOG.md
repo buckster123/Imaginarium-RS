@@ -1,7 +1,7 @@
 # Imaginarium-RS — Backlog
 
 **Rematch: 2026-08-12** (Grok audit swarm + slices a–d on `feat/mcp-craft-tool`;
-docs pass 2 caught leftover ApexOS auto-pick / MCP tool-list / `content_url` lies).
+docs pass 2; §11 paid-request token bucket shipped on `feat/rate-limit-token-bucket`).
 Original source: 2026-07-28 pre-integration audit (`SECURITY.md`). That file is the
 forensic write-up; **this file is the current ledger.** July checkboxes were stale —
 many items landed before this rematch. Do not treat an unchecked box below as
@@ -13,11 +13,7 @@ Provenance: **[confirmed]** traced to current code · **[swarm]** audit-verified
 
 ## Next (queued)
 
-- [ ] **§11 per-token rate limit** — token-bucket throttle per minted token (and
-      node env token), independent of the estimated-USD spend caps. Needed for
-      intense agent loops that stay under a dollar but still slam the xAI quota.
-      ARCHITECTURE §11 used to list this as if it shipped; it does not yet.
-      Design when the next session rolls over.
+- *(empty — §11 shipped. Pick from Still open.)*
 
 ---
 
@@ -41,6 +37,8 @@ Provenance: **[confirmed]** traced to current code · **[swarm]** audit-verified
 - [x] **C4** `POST /wait` is 200 terminal / 404 unknown / 502 upstream.
 - [x] **C5** HTTP `model:"auto"` via `parse_model_selector`.
 - [x] **C6a** Optional `[limits] max_usd_per_job` / `max_usd_per_day` (omit or 0 = off).
+- [x] **C6b / §11** Per-token paid-request token bucket (`paid_rpm` default 30,
+      `paid_burst` 10; `0` = off). Minted token / node env / local CLI-MCP.
 
 ## Closed — Aug 12 slices a–d
 
@@ -63,7 +61,6 @@ Provenance: **[confirmed]** traced to current code · **[swarm]** audit-verified
 
 Track-it and rematch leftovers. Not blockers for LAN loopback.
 
-- [ ] **C6b / §11** Per-token rate limit (see Next).
 - [ ] `estimate_video` ignores resolution → 1080p 1.5 under-quoted. `estimate.rs`
 - [ ] `b64_json` discarded unless `auto_download` is on. `client.rs`
 - [ ] `video_extend` silently clamps duration (2–10) instead of rejecting. `client.rs`

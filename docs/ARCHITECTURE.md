@@ -1,6 +1,6 @@
 # Imaginarium-RS — Architecture Plan (v3, defaults folded)
 Date: 2026-07-28 (locked plan) · as-built rematch **2026-08-12**
-Status: **SHIPPED** as v0.1 local-first. This file is the original locked plan; §2 / §8–11 carry as-built notes. Live ledger: `BACKLOG.md`. Next queued: §11 per-token rate limit (spend caps already exist).
+Status: **SHIPPED** as v0.1 local-first. This file is the original locked plan; §2 / §8–11 carry as-built notes. Live ledger: `BACKLOG.md`.
 Repo target: `~/Projects/Imaginarium-RS` (GH: `buckster123/Imaginarium-RS`)
 CLI bin: `imaginarium` only (no short alias in v1)
 
@@ -302,6 +302,7 @@ Imaginarium-RS/
 │   │   ├── jobs.rs                     # sqlite job records
 │   │   ├── estimate.rs                 # cost estimator
 │   │   ├── craft_video.rs              # local ffmpeg timeline (no upstream spend)
+│   │   ├── rate_limit.rs               # per-identity paid-request token bucket
 │   │   └── config.rs
 │   ├── imaginarium-server/             # axum — API + static browser UI + SSE
 │   ├── imaginarium-mcp/                # stdio MCP (+ optional HTTP MCP feature)
@@ -372,7 +373,7 @@ imaginarium video gen -p "..."    # hits remote node, no local xAI key
 
 ## 8. HTTP API (node)
 
-Versioned under `/v1`. **`openapi/imaginarium-v1.yaml` is the shipped-route source of truth** (rematched 2026-08-12). The sketch in §8.1 is the original design — some entries (SSE `/v1/jobs/{id}/events`, library list/get/delete/upload, `GET /v1/videos/{id}` poll, per-token rate limits) are **not yet implemented**; see the "Not in v1" note in `docs/APEXOS_IMAGINARIUM.md`.
+Versioned under `/v1`. **`openapi/imaginarium-v1.yaml` is the shipped-route source of truth** (rematched 2026-08-12). The sketch in §8.1 is the original design — some entries (SSE `/v1/jobs/{id}/events`, library list/get/delete/upload, `GET /v1/videos/{id}` poll) are **not yet implemented**; see the "Not in v1" note in `docs/APEXOS_IMAGINARIUM.md`. Per-token paid-request rate limits **are** shipped (`[limits] paid_rpm` / `paid_burst`, HTTP 429).
 
 ### 8.1 Core
 
@@ -508,7 +509,7 @@ Reject early with structured error:
 - Upstream xAI key never returned by API
 - Path traversal guard on library (safe asset-id; remote callers cannot pass bare paths)
 - Optional spend caps in config (`[limits] max_usd_per_job`, `max_usd_per_day`; omit or `0` = off). Estimated USD is checked **before** the upstream POST. Daily sum is pending+running+done jobs.
-- Per-token rate limit (token bucket) is **not shipped** — queued; see `BACKLOG.md` Next. Spend caps are not a substitute for quota protection on intense cheap loops.
+- Per-token **paid-request** token bucket (`[limits] paid_rpm` default 30, `paid_burst` default 10; `paid_rpm = 0` = off). Keys: `minted:{id}`, `node` (`IMAGINARIUM_TOKEN`), `local` (CLI / MCP in-process). Counts only image/video generate/edit/extend. Polls, wait, craft, import, estimate are free. HTTP 429 + `Retry-After` + `error_type=rate_limit`. Localhost bypass is not throttled. Process-local (a `serve` and a `mcp` each have their own buckets).
 - Redact tokens in logs (TraceLayer is method+path only)
 - CORS is not `Any` on `/v1/*`
 
@@ -580,7 +581,7 @@ Reject early with structured error:
 | Ephemeral URL expiry | local-first download always |
 | MCP timeouts | status/wait split; server-side jobs |
 | Mode/model illegal combos | core capability matrix |
-| Agent cost runaway | estimate tool + optional `[limits]` USD caps; per-token rate limit queued (`BACKLOG.md`) |
+| Agent cost runaway | estimate tool + optional `[limits]` USD caps; per-token paid-request bucket (`paid_rpm`) |
 | Slint license vs MIT core | separate crate; LICENSE clarity before publish |
 | Huge base64 in LLM context | content_url only; never dump b64 in MCP results |
 | Edge node disk full | library LRU/quota config |

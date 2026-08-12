@@ -86,6 +86,18 @@ pub struct AuthIdentity {
     pub token_id: Option<String>,
 }
 
+impl AuthIdentity {
+    /// Bucket key for the per-token rate limiter. `None` = do not throttle
+    /// (localhost bypass — explicit dev opt-in).
+    pub fn rate_key(&self) -> Option<String> {
+        match self.source {
+            AuthSource::Minted => self.token_id.as_deref().map(|id| format!("minted:{id}")),
+            AuthSource::NodeEnv => Some("node".into()),
+            AuthSource::LocalhostBypass => None,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AuthSource {
     /// `IMAGINARIUM_TOKEN` / config node token (admin).
@@ -389,5 +401,30 @@ mod tests {
         assert!(is_loopback_bind("127.0.0.1:8791"));
         assert!(!is_loopback_bind("0.0.0.0:8791"));
         assert!(!is_loopback_bind("192.168.0.10:8791"));
+    }
+
+    #[test]
+    fn rate_key_is_per_token_and_skips_bypass() {
+        let minted = AuthIdentity {
+            source: AuthSource::Minted,
+            label: "hermes".into(),
+            scope: TokenScope::Write,
+            token_id: Some("01ABC".into()),
+        };
+        assert_eq!(minted.rate_key().as_deref(), Some("minted:01ABC"));
+        let node = AuthIdentity {
+            source: AuthSource::NodeEnv,
+            label: "node".into(),
+            scope: TokenScope::Admin,
+            token_id: None,
+        };
+        assert_eq!(node.rate_key().as_deref(), Some("node"));
+        let bypass = AuthIdentity {
+            source: AuthSource::LocalhostBypass,
+            label: "localhost".into(),
+            scope: TokenScope::Admin,
+            token_id: None,
+        };
+        assert!(bypass.rate_key().is_none());
     }
 }

@@ -101,13 +101,33 @@ pub struct DefaultsConfig {
     pub video_duration: u32,
 }
 
-/// Optional spend gates. `None` / omitted = unlimited.
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+/// Optional spend gates + paid-request rate limit.
+///
+/// USD fields: `None` / `0` = unlimited.
+/// `paid_rpm`: default **30** (on). Set `0` to disable. Independent of USD caps.
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LimitsConfig {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub max_usd_per_job: Option<f64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub max_usd_per_day: Option<f64>,
+    /// Paid (xAI-hitting) requests per minute, per identity. `0` = off.
+    #[serde(default = "default_paid_rpm")]
+    pub paid_rpm: u32,
+    /// Token-bucket burst for paid requests. `0` is treated as 1.
+    #[serde(default = "default_paid_burst")]
+    pub paid_burst: u32,
+}
+
+impl Default for LimitsConfig {
+    fn default() -> Self {
+        Self {
+            max_usd_per_job: None,
+            max_usd_per_day: None,
+            paid_rpm: default_paid_rpm(),
+            paid_burst: default_paid_burst(),
+        }
+    }
 }
 
 impl LimitsConfig {
@@ -244,6 +264,12 @@ fn default_video_res() -> String {
 }
 fn default_duration() -> u32 {
     8
+}
+fn default_paid_rpm() -> u32 {
+    crate::rate_limit::DEFAULT_PAID_RPM
+}
+fn default_paid_burst() -> u32 {
+    crate::rate_limit::DEFAULT_PAID_BURST
 }
 
 impl Config {
@@ -387,6 +413,7 @@ mod tests {
         let per_job = LimitsConfig {
             max_usd_per_job: Some(0.10),
             max_usd_per_day: None,
+            ..Default::default()
         };
         assert!(per_job.check(0.04, 0.0).is_ok());
         assert!(per_job.check(0.50, 0.0).is_err());
@@ -394,6 +421,7 @@ mod tests {
         let daily = LimitsConfig {
             max_usd_per_job: None,
             max_usd_per_day: Some(1.00),
+            ..Default::default()
         };
         assert!(daily.check(0.40, 0.50).is_ok());
         assert!(daily.check(0.40, 0.70).is_err());
@@ -401,7 +429,18 @@ mod tests {
         let disabled = LimitsConfig {
             max_usd_per_job: Some(0.0),
             max_usd_per_day: Some(0.0),
+            ..Default::default()
         };
         assert!(disabled.check(99.0, 99.0).is_ok());
+    }
+
+    #[test]
+    fn paid_rpm_defaults_on_when_omitted() {
+        let cfg: Config = toml::from_str("").unwrap();
+        assert_eq!(cfg.limits.paid_rpm, crate::rate_limit::DEFAULT_PAID_RPM);
+        assert_eq!(cfg.limits.paid_burst, crate::rate_limit::DEFAULT_PAID_BURST);
+
+        let off: LimitsConfig = toml::from_str("paid_rpm = 0").unwrap();
+        assert_eq!(off.paid_rpm, 0);
     }
 }

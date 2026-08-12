@@ -14,6 +14,7 @@ use axum::Router;
 use imaginarium_core::client::ImagineClient;
 use imaginarium_core::config::Config;
 use imaginarium_core::library::Library;
+use imaginarium_core::rate_limit::RateLimiter;
 use imaginarium_core::tokens::{is_loopback_bind, TokenStore};
 use tokio::sync::Mutex;
 use tower_http::trace::TraceLayer;
@@ -36,6 +37,8 @@ pub struct AppState {
     /// real peer IP (via `ConnectInfo`) to be loopback — never just the bind string —
     /// so an embedder that mounts `api_router` without connect-info fails closed.
     pub allow_localhost_no_auth: bool,
+    /// Per-token bucket for paid upstream routes. `None` when `paid_rpm = 0`.
+    pub rate_limiter: Option<RateLimiter>,
 }
 
 pub struct ServeOptions {
@@ -66,9 +69,11 @@ pub async fn serve(cfg: Config, opts: ServeOptions) -> Result<()> {
     cfg.server.bind = opts.bind.clone();
     cfg.server.allow_localhost_no_auth = opts.allow_localhost_no_auth;
 
-    let client =
-        ImagineClient::from_config(&cfg).context("upstream xAI credentials required for serve")?;
+    let client = ImagineClient::from_config(&cfg)
+        .context("upstream xAI credentials required for serve")?
+        .without_local_rate();
     let library = Library::new(cfg.library_dir());
+    let rate_limiter = RateLimiter::from_limits(&cfg.limits);
 
     let allow_localhost_no_auth = opts.allow_localhost_no_auth;
     let state = AppState {
@@ -77,6 +82,7 @@ pub async fn serve(cfg: Config, opts: ServeOptions) -> Result<()> {
         library: Arc::new(library),
         tokens: Arc::new(Mutex::new(tokens)),
         allow_localhost_no_auth,
+        rate_limiter,
     };
 
     // No wildcard CORS on an authenticated API. The embedded SPA is served from the
