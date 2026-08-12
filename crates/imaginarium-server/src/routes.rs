@@ -12,7 +12,10 @@ use imaginarium_core::client::{
 use imaginarium_core::estimate;
 use imaginarium_core::jobs::JobStore;
 use imaginarium_core::library::media_from_node_input;
-use imaginarium_core::models::{parse_model_selector, ModelId};
+use imaginarium_core::models::{
+    parse_model_selector, parse_optional_image_quality, parse_reference_audios,
+    validate_image_quality, ModelId,
+};
 use imaginarium_core::tokens::TokenScope;
 use imaginarium_core::types::{JobId, JobMode, JobResult, JobStatus, MediaRef};
 use serde::Deserialize;
@@ -91,6 +94,8 @@ struct ImageGenBody {
     n: Option<u32>,
     aspect_ratio: Option<String>,
     resolution: Option<String>,
+    /// Image 2.0 only: `low` | `medium`.
+    quality: Option<String>,
 }
 
 async fn image_gen(State(state): State<AppState>, Json(body): Json<ImageGenBody>) -> Response {
@@ -98,6 +103,13 @@ async fn image_gen(State(state): State<AppState>, Json(body): Json<ImageGenBody>
         Ok(m) => m.unwrap_or(ModelId::Image),
         Err(e) => return err_response(StatusCode::BAD_REQUEST, e),
     };
+    let quality = match parse_optional_image_quality(body.quality.as_deref()) {
+        Ok(q) => q,
+        Err(e) => return err_response(StatusCode::BAD_REQUEST, e),
+    };
+    if let Err(e) = validate_image_quality(model, quality) {
+        return err_response(StatusCode::BAD_REQUEST, e);
+    }
     let jobs = match JobStore::open(&state.cfg.db_path()) {
         Ok(j) => j,
         Err(e) => return err_response(StatusCode::INTERNAL_SERVER_ERROR, e),
@@ -111,6 +123,7 @@ async fn image_gen(State(state): State<AppState>, Json(body): Json<ImageGenBody>
                 n: body.n.unwrap_or(1),
                 aspect_ratio: body.aspect_ratio,
                 resolution: body.resolution,
+                quality,
                 response_format: ResponseFormat::Url,
             },
             &state.library,
@@ -131,6 +144,8 @@ struct ImageEditBody {
     n: Option<u32>,
     aspect_ratio: Option<String>,
     resolution: Option<String>,
+    /// Image 2.0 only: `low` | `medium`.
+    quality: Option<String>,
 }
 
 async fn image_edit(State(state): State<AppState>, Json(body): Json<ImageEditBody>) -> Response {
@@ -138,6 +153,13 @@ async fn image_edit(State(state): State<AppState>, Json(body): Json<ImageEditBod
         Ok(m) => m.unwrap_or(ModelId::Image),
         Err(e) => return err_response(StatusCode::BAD_REQUEST, e),
     };
+    let quality = match parse_optional_image_quality(body.quality.as_deref()) {
+        Ok(q) => q,
+        Err(e) => return err_response(StatusCode::BAD_REQUEST, e),
+    };
+    if let Err(e) = validate_image_quality(model, quality) {
+        return err_response(StatusCode::BAD_REQUEST, e);
+    }
     let lib_root = state.cfg.library_dir();
     let refs: Vec<MediaRef> = match body
         .images
@@ -162,6 +184,7 @@ async fn image_edit(State(state): State<AppState>, Json(body): Json<ImageEditBod
                 n: body.n.unwrap_or(1),
                 aspect_ratio: body.aspect_ratio,
                 resolution: body.resolution,
+                quality,
                 response_format: ResponseFormat::Url,
             },
             &state.library,
@@ -180,6 +203,8 @@ struct VideoGenBody {
     model: Option<String>,
     image: Option<String>,
     reference_images: Option<Vec<String>>,
+    /// Video 1.5 preset voice_ids (max 3). Audio-only R2V is valid.
+    reference_audios: Option<Vec<String>>,
     duration: Option<u32>,
     aspect_ratio: Option<String>,
     resolution: Option<String>,
@@ -214,6 +239,10 @@ async fn video_gen(State(state): State<AppState>, Json(body): Json<VideoGenBody>
         Ok(v) => v,
         Err(e) => return err_response(StatusCode::BAD_REQUEST, e),
     };
+    let reference_audios = match parse_reference_audios(body.reference_audios.unwrap_or_default()) {
+        Ok(v) => v,
+        Err(e) => return err_response(StatusCode::BAD_REQUEST, e),
+    };
     let jobs = match JobStore::open(&state.cfg.db_path()) {
         Ok(j) => j,
         Err(e) => return err_response(StatusCode::INTERNAL_SERVER_ERROR, e),
@@ -227,6 +256,7 @@ async fn video_gen(State(state): State<AppState>, Json(body): Json<VideoGenBody>
                 explicit_model: explicit,
                 image,
                 reference_images: refs,
+                reference_audios,
                 duration: body.duration,
                 aspect_ratio: body.aspect_ratio,
                 resolution: body.resolution,

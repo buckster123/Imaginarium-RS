@@ -12,7 +12,7 @@ use imaginarium_core::config::Config;
 use imaginarium_core::estimate;
 use imaginarium_core::jobs::JobStore;
 use imaginarium_core::library::{media_from_node_input, Library};
-use imaginarium_core::models::ModelId;
+use imaginarium_core::models::{parse_optional_image_quality, parse_reference_audios, ModelId};
 use imaginarium_core::types::{JobId, JobResult};
 use reqwest::Client;
 use serde_json::{json, Value};
@@ -108,6 +108,7 @@ impl Backend for LocalBackend {
             .ok_or_else(|| anyhow!("prompt required"))?
             .to_string();
         let model = parse_model(args["model"].as_str(), "image")?;
+        let quality = parse_optional_image_quality(args["quality"].as_str())?;
         let jobs = self.jobs()?;
         let client = self.client()?;
         let r = client
@@ -118,6 +119,7 @@ impl Backend for LocalBackend {
                     n: args["n"].as_u64().unwrap_or(1) as u32,
                     aspect_ratio: args["aspect_ratio"].as_str().map(str::to_string),
                     resolution: args["resolution"].as_str().map(str::to_string),
+                    quality,
                     response_format: ResponseFormat::Url,
                 },
                 &self.library,
@@ -142,6 +144,7 @@ impl Backend for LocalBackend {
             .collect::<std::result::Result<Vec<_>, _>>()
             .map_err(|e| anyhow!(e))?;
         let model = parse_model(args["model"].as_str(), "image")?;
+        let quality = parse_optional_image_quality(args["quality"].as_str())?;
         let jobs = self.jobs()?;
         let client = self.client()?;
         let r = client
@@ -153,6 +156,7 @@ impl Backend for LocalBackend {
                     n: args["n"].as_u64().unwrap_or(1) as u32,
                     aspect_ratio: args["aspect_ratio"].as_str().map(str::to_string),
                     resolution: args["resolution"].as_str().map(str::to_string),
+                    quality,
                     response_format: ResponseFormat::Url,
                 },
                 &self.library,
@@ -184,6 +188,18 @@ impl Backend for LocalBackend {
             .map(|s| media_from_node_input(s, &self.library.root))
             .transpose()
             .map_err(|e| anyhow!(e))?;
+        let reference_audios = match args["reference_audios"].as_array() {
+            Some(a) => parse_reference_audios(a.iter().filter_map(|v| v.as_str()))
+                .map_err(|e| anyhow!(e))?,
+            None => {
+                // Also accept a single string or voice_id alias.
+                if let Some(one) = args["voice_id"].as_str().or_else(|| args["voice"].as_str()) {
+                    parse_reference_audios([one]).map_err(|e| anyhow!(e))?
+                } else {
+                    Vec::new()
+                }
+            }
+        };
         let no_wait = args["no_wait"].as_bool().unwrap_or(false);
         let jobs = self.jobs()?;
         let client = self.client()?;
@@ -195,6 +211,7 @@ impl Backend for LocalBackend {
                     explicit_model: explicit,
                     image,
                     reference_images: refs,
+                    reference_audios,
                     duration: args["duration"].as_u64().map(|d| d as u32),
                     aspect_ratio: args["aspect_ratio"].as_str().map(str::to_string),
                     resolution: args["resolution"].as_str().map(str::to_string),

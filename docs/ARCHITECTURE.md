@@ -61,25 +61,28 @@ Auth: `Authorization: Bearer $XAI_API_KEY`
 | Model | Modes | Notes |
 |---|---|---|
 | `grok-imagine-image` | T2I, edit | Fast / cheaper |
-| `grok-imagine-image-quality` | T2I, edit | Higher fidelity |
-| `grok-imagine-video` | T2V, R2V, edit, extend, legacy I2V | Default multi-mode video |
-| `grok-imagine-video-1.5` | **I2V only** | Only 1080p path; no T2V/R2V |
+| `grok-imagine-image-quality` | T2I, edit | 1.x higher-fidelity tier |
+| `grok-imagine-image-2.0` | T2I, edit | Aug 2026 model; optional `quality`=`low`\|`medium` |
+| `grok-imagine-video` | T2V, I2V, R2V, edit, extend | Legacy; max 720p; no voices |
+| `grok-imagine-video-1.5` | T2V, I2V, R2V | Default generate model. 1080p on T2V/I2V; R2V + `reference_audios` cap 720p |
 
 ### 2.3 Parameter rules (encode in capability matrix)
 
 **Images**
 - `prompt`, `model`, `n`, `aspect_ratio` (incl. `auto`, phone ratios), `resolution` (`1k`|`2k`)
+- `quality`: `low` | `medium` — **Image 2.0 only** (omit for upstream default `medium`)
 - `response_format`: `url` | `b64_json`
-- edits: `image` OR `images[]` (max 3); multi-ref tokens `<IMAGE_0>`…
+- edits: `image` OR `images[]` (max 3 per API docs; consumer 2.0 UI allows 5); multi-ref tokens `<IMAGE_0>`…
 - each media input: `{url}` | `{file_id}` | local path→data-URI (client-side)
 - `storage_options` only when cloud profile enabled
 
 **Video**
 - modes mutually exclusive: prompt-only | `image` | `reference_images` | edit `video` | extend `video`
-- **forbid** `image` + `reference_images`
+- **forbid** `image` + `reference_images` / `reference_audios`
+- `reference_audios`: up to 3 preset `voice_id`s on **video-1.5 R2V** (audio-only is valid)
 - duration 1–15s gen; extend segment 2–10s (default 6) **adds** to original length
 - AR: 1:1, 16:9, 9:16, 4:3, 3:4, 3:2, 2:3
-- res: 480p | 720p | 1080p (1080p only video-1.5 I2V)
+- res: 480p | 720p | 1080p (1080p only video-1.5 T2V/I2V; R2V max 720p)
 - edit inherits input duration/AR/res (cap ~720p / ~8.7s)
 - poll statuses: `pending` | `done` | `failed` | `expired`
 - outputs: ephemeral URL; optional file_output when cloud profile on
@@ -90,6 +93,7 @@ Auth: `Authorization: Bearer $XAI_API_KEY`
 |---|---|
 | image | $0.02 / out |
 | image-quality | $0.05–0.07 / out |
+| image-2.0 | $0.04 / out |
 | video | $0.05–0.07 / sec |
 | video-1.5 | $0.08–0.25 / sec (res) |
 | Files storage | $0.025 / GiB / day (opt-in only) |
@@ -483,13 +487,14 @@ Implemented once in `imaginarium-core::models`, consumed by CLI/API/MCP/UI.
 |---|---|---|---|---|---|---|---|---|
 | image | ✓ | ✓ | | | | | | 2k |
 | image-quality | ✓ | ✓ | | | | | | 2k |
-| video | | | ✓ | ✓* | ✓ | ✓ | ✓ | 720p |
-| video-1.5 | | | | ✓ | | | | **1080p** |
+| image-2.0 | ✓ | ✓ | | | | | | 2k |
+| video | | | ✓ | ✓ | ✓ | ✓ | ✓ | 720p |
+| video-1.5 | | | ✓ | ✓ | ✓ | | | **1080p** (R2V 720p) |
 
-\*legacy I2V on `video`; prefer 1.5 when image present and user didn’t force model.
+Generate modes default to `video-1.5`. Edit/extend stay on `video`.
 
 Reject early with structured error:
-`{ ok:false, error_type:"invalid_mode", message:"grok-imagine-video-1.5 does not support text-to-video" }`
+`{ ok:false, error_type:"invalid_mode", message:"1080p is not supported on reference-to-video (max 720p)" }`
 
 ---
 

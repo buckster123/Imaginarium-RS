@@ -198,7 +198,7 @@ fn default_image_model() -> String {
     "grok-imagine-image".into()
 }
 fn default_video_model() -> String {
-    "grok-imagine-video".into()
+    "grok-imagine-video-1.5".into()
 }
 fn default_i2v_model() -> String {
     "grok-imagine-video-1.5".into()

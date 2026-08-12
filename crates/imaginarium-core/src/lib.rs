@@ -15,7 +15,8 @@ pub mod types;
 pub use config::Config;
 pub use error::{Error, Result};
 pub use models::{
-    catalog, default_video_model_for, validate_video_generate, ModelId, ModelInfo, VideoMode,
+    catalog, default_video_model_for, parse_optional_image_quality, parse_reference_audios,
+    validate_image_quality, validate_video_generate, ImageQuality, ModelId, ModelInfo, VideoMode,
 };
 pub use tokens::{
     extract_presented_token, is_loopback_bind, AuthIdentity, AuthSource, TokenMintResult,

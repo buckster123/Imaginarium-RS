@@ -23,6 +23,7 @@
           <select v-model="model">
             <option value="image">grok-imagine-image</option>
             <option value="quality">grok-imagine-image-quality</option>
+            <option value="2.0">grok-imagine-image-2.0</option>
           </select>
         </div>
         <div class="field">
@@ -33,6 +34,7 @@
           <label>Aspect</label>
           <select v-model="aspect">
             <option value="">default</option>
+            <option>auto</option>
             <option>1:1</option>
             <option>16:9</option>
             <option>9:16</option>
@@ -40,6 +42,8 @@
             <option>3:4</option>
             <option>3:2</option>
             <option>2:3</option>
+            <option>2:1</option>
+            <option>1:2</option>
           </select>
         </div>
         <div class="field">
@@ -48,6 +52,14 @@
             <option value="">default</option>
             <option value="1k">1k</option>
             <option value="2k">2k</option>
+          </select>
+        </div>
+        <div class="field" v-if="isImage20">
+          <label>Quality</label>
+          <select v-model="quality">
+            <option value="">medium (default)</option>
+            <option value="medium">medium</option>
+            <option value="low">low</option>
           </select>
         </div>
       </div>
@@ -118,10 +130,11 @@ const PREF = 'imaginarium_image_prefs'
 
 const mode = ref('gen')
 const prompt = ref('')
-const model = ref('quality')
+const model = ref('2.0')
 const n = ref(1)
 const aspect = ref('16:9')
 const resolution = ref('')
+const quality = ref('')
 const files = ref([])
 const fileDataUrls = ref([]) // for chain-loaded remote images
 const chainNote = ref('')
@@ -141,7 +154,11 @@ const canRun = computed(() => {
   return true
 })
 
-watch([model, n, aspect, resolution], () => {
+const isImage20 = computed(() =>
+  ['2.0', 'image-2.0', 'image-2', 'imagine-2', 'grok-imagine-image-2.0'].includes(model.value)
+)
+
+watch([model, n, aspect, resolution, quality], () => {
   savePrefs()
   refreshEstimate()
 })
@@ -166,6 +183,7 @@ function savePrefs() {
       n: n.value,
       aspect: aspect.value,
       resolution: resolution.value,
+      quality: quality.value,
     })
   )
 }
@@ -177,6 +195,7 @@ function loadPrefs() {
     if (j.n) n.value = j.n
     if (j.aspect != null) aspect.value = j.aspect
     if (j.resolution != null) resolution.value = j.resolution
+    if (j.quality != null) quality.value = j.quality
   } catch {
     /* ignore */
   }
@@ -307,6 +326,7 @@ async function run() {
         n: n.value,
         aspect_ratio: aspect.value || undefined,
         resolution: resolution.value || undefined,
+        quality: isImage20.value && quality.value ? quality.value : undefined,
       })
     } else {
       const images = [...fileDataUrls.value]
@@ -318,6 +338,7 @@ async function run() {
         n: n.value,
         aspect_ratio: aspect.value || undefined,
         resolution: resolution.value || undefined,
+        quality: isImage20.value && quality.value ? quality.value : undefined,
       })
     }
     toastOk(`Image ${result.value.status || 'done'}`)

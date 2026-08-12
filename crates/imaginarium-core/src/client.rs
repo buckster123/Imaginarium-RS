@@ -17,7 +17,9 @@ use crate::error::{Error, Result};
 use crate::estimate;
 use crate::jobs::{self, JobStore};
 use crate::library::{self, Library};
-use crate::models::{self, validate_video_generate, ModelId, VideoMode};
+use crate::models::{
+    self, validate_image_quality, validate_video_generate, ImageQuality, ModelId, VideoMode,
+};
 use crate::types::*;
 
 const USER_AGENT_VALUE: &str = concat!("Imaginarium-RS/", env!("CARGO_PKG_VERSION"));
@@ -41,6 +43,8 @@ pub struct ImageGenerateRequest {
     pub n: u32,
     pub aspect_ratio: Option<String>,
     pub resolution: Option<String>,
+    /// Image 2.0 only (`low` | `medium`). Omitted → upstream default `medium`.
+    pub quality: Option<ImageQuality>,
     pub response_format: ResponseFormat,
 }
 
@@ -52,18 +56,22 @@ pub struct ImageEditRequest {
     pub n: u32,
     pub aspect_ratio: Option<String>,
     pub resolution: Option<String>,
+    /// Image 2.0 only (`low` | `medium`). Omitted → upstream default `medium`.
+    pub quality: Option<ImageQuality>,
     pub response_format: ResponseFormat,
 }
 
 #[derive(Debug, Clone)]
 pub struct VideoGenerateRequest {
     pub prompt: Option<String>,
-    /// If None, auto-selected from mode (I2V→1.5, else video).
+    /// If None, auto-selected (generate modes → video-1.5).
     pub model: Option<ModelId>,
     /// When true, `model` was user-forced (no auto-swap).
     pub explicit_model: bool,
     pub image: Option<MediaRef>,
     pub reference_images: Vec<MediaRef>,
+    /// Preset `voice_id`s for Video 1.5 R2V (`reference_audios`). Max 3.
+    pub reference_audios: Vec<String>,
     pub duration: Option<u32>,
     pub aspect_ratio: Option<String>,
     pub resolution: Option<String>,
@@ -216,6 +224,7 @@ impl ImagineClient {
             s.upsert_result(&job)?;
         }
 
+        validate_image_quality(req.model, req.quality)?;
         let cost = estimate::estimate_image(req.model, req.n);
         let mut payload = json!({
             "model": req.model.as_str(),
@@ -234,6 +243,12 @@ impl ImagineClient {
                 .as_object_mut()
                 .unwrap()
                 .insert("resolution".into(), json!(res));
+        }
+        if let Some(q) = req.quality {
+            payload
+                .as_object_mut()
+                .unwrap()
+                .insert("quality".into(), json!(q.as_str()));
         }
         if let Some(storage) = self.storage_options_json("imaginarium-image.png") {
             payload
@@ -283,11 +298,16 @@ impl ImagineClient {
                 "image edit requires at least one image",
             ));
         }
-        if req.images.len() > 3 {
-            return Err(Error::invalid_mode(
-                "image edit supports at most 3 source images",
-            ));
+        let max_src = models::get(req.model)
+            .capabilities
+            .max_source_images
+            .unwrap_or(3);
+        if req.images.len() as u32 > max_src {
+            return Err(Error::invalid_mode(format!(
+                "image edit supports at most {max_src} source images"
+            )));
         }
+        validate_image_quality(req.model, req.quality)?;
 
         let mut job = jobs::pending_job(
             JobMode::ImageEdit,
@@ -336,6 +356,12 @@ impl ImagineClient {
                 .unwrap()
                 .insert("resolution".into(), json!(res));
         }
+        if let Some(q) = req.quality {
+            payload
+                .as_object_mut()
+                .unwrap()
+                .insert("quality".into(), json!(q.as_str()));
+        }
         if let Some(storage) = self.storage_options_json("imaginarium-edit.png") {
             payload
                 .as_object_mut()
@@ -377,15 +403,17 @@ impl ImagineClient {
         store: Option<&JobStore>,
         wait: bool,
     ) -> Result<JobResult> {
-        if req.image.is_some() && !req.reference_images.is_empty() {
+        if req.image.is_some()
+            && (!req.reference_images.is_empty() || !req.reference_audios.is_empty())
+        {
             return Err(Error::invalid_mode(
-                "cannot combine image (I2V) and reference_images (R2V) in one request",
+                "cannot combine image (I2V) with reference_images / reference_audios (R2V)",
             ));
         }
 
         let mode = if req.image.is_some() {
             VideoMode::ImageToVideo
-        } else if !req.reference_images.is_empty() {
+        } else if !req.reference_images.is_empty() || !req.reference_audios.is_empty() {
             VideoMode::ReferenceToVideo
         } else {
             VideoMode::TextToVideo
@@ -404,6 +432,7 @@ impl ImagineClient {
                         req.resolution.as_deref(),
                         req.duration,
                         req.reference_images.len(),
+                        req.reference_audios.len(),
                     )
                     .is_ok()
                 })
@@ -439,6 +468,7 @@ impl ImagineClient {
             req.resolution.as_deref(),
             req.duration,
             req.reference_images.len(),
+            req.reference_audios.len(),
         )?;
 
         let duration = req.duration.unwrap_or(8).clamp(1, 15);
@@ -489,6 +519,17 @@ impl ImagineClient {
                 .as_object_mut()
                 .unwrap()
                 .insert("reference_images".into(), Value::Array(refs));
+        }
+        if !req.reference_audios.is_empty() {
+            let audios: Vec<Value> = req
+                .reference_audios
+                .iter()
+                .map(|id| json!({ "voice_id": id }))
+                .collect();
+            payload
+                .as_object_mut()
+                .unwrap()
+                .insert("reference_audios".into(), Value::Array(audios));
         }
         if let Some(storage) = self.storage_options_json("imaginarium-video.mp4") {
             payload
@@ -1154,6 +1195,8 @@ pub fn models_table_json() -> Value {
         "image_aspect_ratios": models::IMAGE_ASPECT_RATIOS,
         "video_aspect_ratios": models::VIDEO_ASPECT_RATIOS,
         "image_resolutions": models::IMAGE_RESOLUTIONS,
+        "image_quality_levels": models::IMAGE_QUALITY_LEVELS,
         "video_resolutions": models::VIDEO_RESOLUTIONS,
+        "preset_voice_ids": models::PRESET_VOICE_IDS,
     })
 }
