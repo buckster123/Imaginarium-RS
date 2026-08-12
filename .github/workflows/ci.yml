@@ -20,8 +20,8 @@ jobs:
       - name: fmt
         run: cargo fmt --all -- --check
       - name: clippy
-        run: cargo clippy -p imaginarium-core -p imaginarium-cli -- -D warnings
+        run: cargo clippy -p imaginarium-core -p imaginarium-cli -p imaginarium-mcp -p imaginarium-server -- -D warnings
       - name: test
-        run: cargo test -p imaginarium-core -p imaginarium-cli
+        run: cargo test -p imaginarium-core -p imaginarium-cli -p imaginarium-mcp
       - name: build
         run: cargo build -p imaginarium-cli

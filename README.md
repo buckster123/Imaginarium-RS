@@ -153,6 +153,19 @@ See [`SECURITY.md`](SECURITY.md) for the trust model and [`BACKLOG.md`](BACKLOG.
 | Node / mesh token | `IMAGINARIUM_TOKEN`, or `imaginarium token create` |
 | Spend caps | `[limits] max_usd_per_job` / `max_usd_per_day` (optional) |
 
+## Landing changes
+
+Feature branch off `master` → PR → merge. That is how #1–#8 landed; keep doing it. Don't push commits straight to `master`.
+
+```bash
+git checkout -b feat/…
+# local commits at slice / milestone
+git push -u origin HEAD
+gh pr create
+```
+
+CI (`fmt` / `clippy` / `test` / `build`) runs on every PR. Merge when green.
+
 ## License
 
 - Headless stack (`core`, `cli`, `mcp`, `server`, embedded web assets): **MIT OR Apache-2.0**.
