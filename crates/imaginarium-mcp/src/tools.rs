@@ -92,7 +92,7 @@ pub fn all_tool_schemas() -> Vec<Value> {
         ),
         tool(
             "imaginarium_video_extend",
-            "Extend video from last frame. video: library:{job_id} (chain a previous video — preferred), URL, or file_id. duration is extension segment only (2–10s, default 6).",
+            "Extend video from last frame. video: library:{job_id} (chain a previous video — preferred), URL, or file_id. duration is extension segment only (2–10s, default 6). Values outside that range are rejected, not clamped.",
             json!({
                 "type": "object",
                 "properties": {

@@ -63,7 +63,7 @@ Track-it and rematch leftovers. Not blockers for LAN loopback.
 
 - [x] `estimate_video` quotes by resolution (1.5: $0.08 / $0.14 / $0.25). `estimate.rs`
 - [x] `b64_json` persisted even when `auto_download` is off (bytes already in RAM). `client.rs`
-- [ ] `video_extend` silently clamps duration (2–10) instead of rejecting. `client.rs`
+- [x] `video_extend` rejects duration outside 2–10 (no silent clamp). `models.rs`
 - [ ] Image AR / resolution / model not fully validated against the matrix. `models.rs`
 - [ ] Unbounded `?limit` on `/v1/jobs`. `jobs.rs`
 - [ ] `auth_headers()` panics on a control char in the API key. `client.rs`
