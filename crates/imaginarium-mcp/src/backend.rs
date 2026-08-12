@@ -116,7 +116,7 @@ impl Backend for LocalBackend {
                 ImageGenerateRequest {
                     prompt,
                     model,
-                    n: args["n"].as_u64().unwrap_or(1) as u32,
+                    n: crate::args::u32_or(args, "n", 1)?,
                     aspect_ratio: args["aspect_ratio"].as_str().map(str::to_string),
                     resolution: args["resolution"].as_str().map(str::to_string),
                     quality,
@@ -153,7 +153,7 @@ impl Backend for LocalBackend {
                     prompt,
                     model,
                     images,
-                    n: args["n"].as_u64().unwrap_or(1) as u32,
+                    n: crate::args::u32_or(args, "n", 1)?,
                     aspect_ratio: args["aspect_ratio"].as_str().map(str::to_string),
                     resolution: args["resolution"].as_str().map(str::to_string),
                     quality,
@@ -200,7 +200,7 @@ impl Backend for LocalBackend {
                 }
             }
         };
-        let no_wait = args["no_wait"].as_bool().unwrap_or(false);
+        let no_wait = crate::args::bool_or(args, "no_wait", false)?;
         let jobs = self.jobs()?;
         let client = self.client()?;
         let r = client
@@ -212,7 +212,7 @@ impl Backend for LocalBackend {
                     image,
                     reference_images: refs,
                     reference_audios,
-                    duration: args["duration"].as_u64().map(|d| d as u32),
+                    duration: crate::args::optional_u32(args, "duration")?,
                     aspect_ratio: args["aspect_ratio"].as_str().map(str::to_string),
                     resolution: args["resolution"].as_str().map(str::to_string),
                 },
@@ -238,7 +238,7 @@ impl Backend for LocalBackend {
             .map(ModelId::parse)
             .transpose()
             .map_err(|e| anyhow!(e))?;
-        let no_wait = args["no_wait"].as_bool().unwrap_or(false);
+        let no_wait = crate::args::bool_or(args, "no_wait", false)?;
         let jobs = self.jobs()?;
         let client = self.client()?;
         let r = client
@@ -271,7 +271,7 @@ impl Backend for LocalBackend {
             .map(ModelId::parse)
             .transpose()
             .map_err(|e| anyhow!(e))?;
-        let no_wait = args["no_wait"].as_bool().unwrap_or(false);
+        let no_wait = crate::args::bool_or(args, "no_wait", false)?;
         let jobs = self.jobs()?;
         let client = self.client()?;
         let r = client
@@ -280,7 +280,7 @@ impl Backend for LocalBackend {
                     prompt,
                     video: media_from_node_input(video, &self.library.root)
                         .map_err(|e| anyhow!(e))?,
-                    duration: args["duration"].as_u64().map(|d| d as u32),
+                    duration: crate::args::optional_u32(args, "duration")?,
                     model,
                 },
                 &self.library,
@@ -325,7 +325,7 @@ impl Backend for LocalBackend {
                 .ok_or_else(|| anyhow!("timeline required (VideoTimeline v1 object)"))?,
         )
         .map_err(|e| anyhow!("timeline parse: {e}"))?;
-        let wait = args["wait"].as_bool().unwrap_or(false);
+        let wait = crate::args::bool_or(args, "wait", false)?;
         let jobs = self.jobs()?;
         let library = self.library.clone();
         let root = self.cfg.library_dir();
@@ -494,7 +494,7 @@ impl Backend for ProxyBackend {
             .get("timeline")
             .cloned()
             .ok_or_else(|| anyhow!("timeline required (VideoTimeline v1 object)"))?;
-        let wait = args["wait"].as_bool().unwrap_or(false);
+        let wait = crate::args::bool_or(args, "wait", false)?;
         let path = if wait {
             "/v1/craft/video/render".to_string()
         } else {

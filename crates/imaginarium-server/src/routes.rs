@@ -557,11 +557,16 @@ async fn library_import(
     State(state): State<AppState>,
     Json(body): Json<LibraryImportBody>,
 ) -> Response {
+    if imaginarium_core::library::estimate_b64_decoded_len(&body.data)
+        > imaginarium_core::library::IMPORT_MAX_BYTES
+    {
+        return err_response(StatusCode::PAYLOAD_TOO_LARGE, "max 40MB import");
+    }
     let (bytes, ext) = match imaginarium_core::library::decode_data_url_or_b64(&body.data) {
         Ok(v) => v,
         Err(e) => return err_response(StatusCode::BAD_REQUEST, e),
     };
-    if bytes.len() > 40 * 1024 * 1024 {
+    if bytes.len() > imaginarium_core::library::IMPORT_MAX_BYTES {
         return err_response(StatusCode::PAYLOAD_TOO_LARGE, "max 40MB import");
     }
     let filename = body.filename.unwrap_or_else(|| format!("import.{ext}"));

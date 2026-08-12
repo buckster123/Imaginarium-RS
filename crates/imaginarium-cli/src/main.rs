@@ -846,7 +846,9 @@ async fn main() -> Result<()> {
                 }
             }
         }
-        Commands::Mcp { proxy } => {
+        Commands::Mcp { ref proxy } => {
+            // Apply --config / --data-home before MCP's own Config::load().
+            let _cfg = load_cfg(&cli)?;
             // Logs must stay on stderr; this takes over stdio for JSON-RPC.
             imaginarium_mcp::run(proxy.clone()).await?;
         }

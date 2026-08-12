@@ -1,5 +1,6 @@
 //! Imaginarium MCP library — stdio JSON-RPC (Cerebro/ApexOS wire format).
 
+mod args;
 mod backend;
 mod dispatch;
 mod tools;

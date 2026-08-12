@@ -365,8 +365,26 @@ pub async fn download_url(client: &reqwest::Client, url: &str, dest: &Path) -> R
     Ok(len)
 }
 
+/// Decoded import cap — matches the HTTP handler (body limit is 64 MB).
+pub const IMPORT_MAX_BYTES: usize = 40 * 1024 * 1024;
+
+/// Rough decoded size of a data-URL or raw base64 payload (before allocation).
+pub fn estimate_b64_decoded_len(input: &str) -> usize {
+    let input = input.trim();
+    let b64 = if let Some(rest) = input.strip_prefix("data:") {
+        rest.split_once(',').map(|(_, b)| b).unwrap_or("")
+    } else {
+        input
+    };
+    let n = b64.bytes().filter(|b| !b.is_ascii_whitespace()).count();
+    n.saturating_mul(3) / 4
+}
+
 /// Decode `data:image/png;base64,...` or raw base64 into bytes + suggested ext.
 pub fn decode_data_url_or_b64(input: &str) -> Result<(Vec<u8>, String)> {
+    if estimate_b64_decoded_len(input) > IMPORT_MAX_BYTES {
+        return Err(Error::other("import exceeds 40MB"));
+    }
     let input = input.trim();
     if let Some(rest) = input.strip_prefix("data:") {
         let (meta, b64) = rest
@@ -487,6 +505,8 @@ mod tests {
         assert_eq!(mime_for_ext("mov"), "video/quicktime");
 
         // data-URL audio imports map to audio extensions
+        assert_eq!(estimate_b64_decoded_len("AAAA"), 3);
+        assert!(estimate_b64_decoded_len("data:image/png;base64,AAAA") <= 3);
         let (bytes, ext) = decode_data_url_or_b64("data:audio/wav;base64,UklGRg==").unwrap();
         assert_eq!(ext, "wav");
         assert_eq!(&bytes[..4], b"RIFF");

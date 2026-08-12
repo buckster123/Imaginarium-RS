@@ -25,8 +25,10 @@
 //! segment-local. Both render on every segment they touch — the historic
 //! "overlays only on clip 0" defect is unrepresentable in this pipeline.
 
+use std::io::Read;
 use std::path::{Path, PathBuf};
-use std::process::Stdio;
+use std::process::{Command, Stdio};
+use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -217,6 +219,16 @@ pub struct VideoTimeline {
 /// Hard cap on drawtext filters per segment — an unbounded caption list is an
 /// ffmpeg-filtergraph DoS vector (audit G4 follow-up).
 const MAX_CAPTIONS_PER_SEGMENT: usize = 32;
+/// Each canvas edge is clamped to this (4K). Stops a Write token asking for 32k².
+const MAX_CANVAS_EDGE: u32 = 4096;
+/// A timeline with hundreds of clips is an ffmpeg spawn/CPU bomb.
+const MAX_SEGMENTS: usize = 48;
+/// Still / title-card duration cap (seconds).
+const MAX_STILL_CARD_DUR_S: f64 = 30.0;
+/// Whole-piece master-clock cap (seconds).
+const MAX_MASTER_DUR_S: f64 = 20.0 * 60.0;
+/// Kill a wedged ffmpeg rather than hold the node forever.
+const FFMPEG_TIMEOUT: Duration = Duration::from_secs(300);
 
 /// Segment cache ceiling — oldest entries pruned past this.
 const SEGMENT_CACHE_MAX_BYTES: u64 = 2 * 1024 * 1024 * 1024;
@@ -456,8 +468,8 @@ fn resolve_canvas(tl: &VideoTimeline, first_clip: Option<&MediaProbe>) -> Canvas
         }
     };
     Canvas {
-        w: even_dim(w),
-        h: even_dim(h),
+        w: even_dim(w.min(MAX_CANVAS_EDGE)),
+        h: even_dim(h.min(MAX_CANVAS_EDGE)),
         fps,
     }
 }
@@ -641,6 +653,15 @@ fn plan_segments(
             tl.version
         )));
     }
+    if sources.is_empty() {
+        return Err(Error::other("timeline has no segments"));
+    }
+    if sources.len() > MAX_SEGMENTS {
+        return Err(Error::other(format!(
+            "timeline has {} segments; max is {MAX_SEGMENTS}",
+            sources.len()
+        )));
+    }
     let style = tl.style.clone().unwrap_or_default();
     if !(0.0..=0.45).contains(&style.letterbox_frac) {
         return Err(Error::other(
@@ -677,11 +698,12 @@ fn plan_segments(
                     .as_ref()
                     .ok_or_else(|| Error::other(format!("segment {i}: missing probe for clip")))?;
                 let in_s = clip.in_s.max(0.0);
-                let window = if clip.out_s > in_s {
-                    clip.out_s - in_s
+                let src_end = if clip.out_s > in_s {
+                    clip.out_s.min(probe.duration_s)
                 } else {
-                    probe.duration_s - in_s
+                    probe.duration_s
                 };
+                let window = src_end - in_s;
                 if window <= 0.05 {
                     return Err(Error::other(format!(
                         "segment {i} ({}): empty window — in_s {:.3} / out_s {:.3} against source duration {:.3}",
@@ -703,6 +725,12 @@ fn plan_segments(
                         } else {
                             "card"
                         }
+                    )));
+                }
+                if clip.dur_s > MAX_STILL_CARD_DUR_S {
+                    return Err(Error::other(format!(
+                        "segment {i}: dur_s {:.1}s exceeds the {MAX_STILL_CARD_DUR_S}s still/card cap",
+                        clip.dur_s
                     )));
                 }
                 if clip.kind == SegmentKind::Still
@@ -770,6 +798,11 @@ fn plan_segments(
         });
         cursor += dur;
     }
+    if cursor > MAX_MASTER_DUR_S {
+        return Err(Error::other(format!(
+            "timeline is {cursor:.1}s; max assembled duration is {MAX_MASTER_DUR_S}s"
+        )));
+    }
     Ok((plans, cursor))
 }
 
@@ -829,7 +862,9 @@ fn segment_args(plan: &SegmentPlan, canvas: Canvas, out: &Path) -> Vec<String> {
                 args.extend(["-ss".into(), format!("{:.3}", plan.in_s)]);
             }
             args.extend(["-i".into(), src.display().to_string()]);
-            args.extend(["-t".into(), format!("{:.3}", plan.src_window)]);
+            // -t after -i is OUTPUT duration. After setpts=PTS/speed the
+            // output length is plan.dur, not the source window.
+            args.extend(["-t".into(), format!("{:.3}", plan.dur)]);
             args.extend(["-vf".into(), segment_vf(plan, canvas)]);
         }
         SegmentKind::Still => {
@@ -1455,17 +1490,43 @@ fn run_ffmpeg(args: &[String]) -> Result<()> {
 }
 
 /// Run ffmpeg; on success return its stderr (the loudnorm measure pass prints
-/// its JSON there), on failure surface a bounded stderr excerpt.
+/// its JSON there), on failure surface a bounded stderr excerpt. A wedged
+/// encode is killed after [`FFMPEG_TIMEOUT`] so a Write token cannot hang the node.
 fn run_ffmpeg_capture(args: &[String]) -> Result<String> {
     info!(?args, "ffmpeg craft");
-    let output = std::process::Command::new("ffmpeg")
+    let mut child = Command::new("ffmpeg")
         .args(args)
-        .stdout(Stdio::piped())
+        .stdout(Stdio::null())
         .stderr(Stdio::piped())
-        .output()
+        .spawn()
         .map_err(|e| Error::other(format!("spawn ffmpeg: {e}")))?;
-    let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
-    if !output.status.success() {
+    let mut stderr_pipe = child
+        .stderr
+        .take()
+        .ok_or_else(|| Error::other("ffmpeg stderr pipe missing"))?;
+    let drain = std::thread::spawn(move || {
+        let mut buf = Vec::new();
+        let _ = stderr_pipe.read_to_end(&mut buf);
+        buf
+    });
+    let start = Instant::now();
+    let status = loop {
+        match child.try_wait() {
+            Ok(Some(st)) => break st,
+            Ok(None) if start.elapsed() >= FFMPEG_TIMEOUT => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err(Error::other(format!(
+                    "ffmpeg timed out after {}s",
+                    FFMPEG_TIMEOUT.as_secs()
+                )));
+            }
+            Ok(None) => std::thread::sleep(Duration::from_millis(100)),
+            Err(e) => return Err(Error::other(format!("wait ffmpeg: {e}"))),
+        }
+    };
+    let stderr = String::from_utf8_lossy(&drain.join().unwrap_or_default()).into_owned();
+    if !status.success() {
         warn!(err = %stderr, "ffmpeg failed");
         return Err(Error::other(format!(
             "ffmpeg failed: {}",
@@ -1628,6 +1689,11 @@ mod tests {
         let tl = bare_timeline(vec![clip("01A", 0.0, 0.0)]);
         let c = resolve_canvas(&tl, Some(&probe(5.0, 1921, 1081, 30.0, false)));
         assert_eq!((c.w, c.h, c.fps), (1920, 1080, 30));
+        let mut huge = bare_timeline(vec![clip("01A", 0.0, 0.0)]);
+        huge.width = 16_000;
+        huge.height = 9_000;
+        let ch = resolve_canvas(&huge, None);
+        assert!(ch.w <= MAX_CANVAS_EDGE && ch.h <= MAX_CANVAS_EDGE);
         // explicit odd request also lands even
         let mut tl2 = bare_timeline(vec![clip("01A", 0.0, 0.0)]);
         tl2.width = 853;
@@ -1835,6 +1901,31 @@ mod tests {
     }
 
     #[test]
+    fn still_dur_and_segment_count_are_capped() {
+        let mut s = clip("01S", 0.0, 0.0);
+        s.kind = SegmentKind::Still;
+        s.dur_s = MAX_STILL_CARD_DUR_S + 1.0;
+        let tl = bare_timeline(vec![s]);
+        let err = plan_one(&tl, probe(6.0, 640, 360, 24.0, false)).unwrap_err();
+        assert!(err.to_string().contains("still/card cap"));
+
+        let many: Vec<_> = (0..MAX_SEGMENTS + 1)
+            .map(|i| clip(&format!("01{i:02}"), 0.0, 1.0))
+            .collect();
+        let tl2 = bare_timeline(many);
+        let err2 = plan_one(&tl2, probe(6.0, 640, 360, 24.0, false)).unwrap_err();
+        assert!(err2.to_string().contains("segments"));
+    }
+
+    #[test]
+    fn clip_out_s_clamps_to_source() {
+        let c = clip("01A", 0.0, 99.0);
+        let tl = bare_timeline(vec![c]);
+        let (plans, _) = plan_one(&tl, probe(6.0, 640, 360, 24.0, true)).unwrap();
+        assert!((plans[0].src_window - 6.0).abs() < 1e-9);
+    }
+
+    #[test]
     fn caption_cap_is_enforced() {
         let mut c = clip("01A", 0.0, 4.0);
         c.captions = (0..MAX_CAPTIONS_PER_SEGMENT + 1)
@@ -1871,6 +1962,14 @@ mod tests {
         assert_eq!(args[0], "-nostdin");
         assert!(args.contains(&"-an".to_string()));
         assert!(args.windows(2).any(|w| w[0] == "-t" && w[1] == "3.500"));
+        // speed ≠ 1: -t is OUTPUT duration (plan.dur), not the source window
+        let mut sped = test_plan(SegmentKind::Clip);
+        sped.speed = 2.0;
+        sped.dur = 1.75;
+        sped.src_window = 3.5;
+        let sargs = segment_args(&sped, CANVAS, Path::new("/w/fast.mp4"));
+        assert!(sargs.windows(2).any(|w| w[0] == "-t" && w[1] == "1.750"));
+        assert!(!sargs.windows(2).any(|w| w[0] == "-t" && w[1] == "3.500"));
         assert!(args.windows(2).any(|w| w[0] == "-ss" && w[1] == "1.000"));
         assert!(args
             .windows(2)
