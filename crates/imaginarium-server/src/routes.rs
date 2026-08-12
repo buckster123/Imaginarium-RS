@@ -1,7 +1,9 @@
 //! HTTP route handlers.
 
+use axum::body::Body;
 use axum::extract::{Path, Query, State};
-use axum::http::StatusCode;
+use axum::http::header::{CONTENT_LENGTH, CONTENT_TYPE};
+use axum::http::{HeaderValue, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{delete, get, post};
 use axum::{Json, Router};
@@ -516,24 +518,36 @@ async fn library_content(
     }
     let root = state.cfg.library_dir();
     match job_content_path(&root, &id, q.i.unwrap_or(0)) {
-        Some(path) => match tokio::fs::read(&path).await {
-            Ok(bytes) => {
-                let ct = path
-                    .extension()
-                    .and_then(|e| e.to_str())
-                    .map(|e| imaginarium_core::library::mime_for_ext(&e.to_ascii_lowercase()))
-                    .unwrap_or("application/octet-stream");
-                (
-                    StatusCode::OK,
-                    [(axum::http::header::CONTENT_TYPE, ct)],
-                    bytes,
-                )
-                    .into_response()
-            }
-            Err(e) => err_response(StatusCode::INTERNAL_SERVER_ERROR, e),
-        },
+        Some(path) => {
+            let ct = path
+                .extension()
+                .and_then(|e| e.to_str())
+                .map(|e| imaginarium_core::library::mime_for_ext(&e.to_ascii_lowercase()))
+                .unwrap_or("application/octet-stream");
+            stream_file(&path, ct).await
+        }
         None => err_response(StatusCode::NOT_FOUND, "asset not found"),
     }
+}
+
+/// Stream a library file in chunks. Never slurp the whole asset into RAM.
+async fn stream_file(path: &std::path::Path, content_type: &'static str) -> Response {
+    let meta = match tokio::fs::metadata(path).await {
+        Ok(m) => m,
+        Err(e) => return err_response(StatusCode::INTERNAL_SERVER_ERROR, e),
+    };
+    let file = match tokio::fs::File::open(path).await {
+        Ok(f) => f,
+        Err(e) => return err_response(StatusCode::INTERNAL_SERVER_ERROR, e),
+    };
+    let mut res = Response::new(Body::from_stream(tokio_util::io::ReaderStream::new(file)));
+    *res.status_mut() = StatusCode::OK;
+    res.headers_mut()
+        .insert(CONTENT_TYPE, HeaderValue::from_static(content_type));
+    if let Ok(len) = HeaderValue::from_str(&meta.len().to_string()) {
+        res.headers_mut().insert(CONTENT_LENGTH, len);
+    }
+    res
 }
 
 /// Serve (or lazily build) the 480px poster for a job's first asset.
@@ -757,3 +771,27 @@ async fn tokens_revoke(State(state): State<AppState>, Path(id): Path<String>) ->
 }
 
 // end routes
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use axum::body::to_bytes;
+
+    #[tokio::test]
+    async fn stream_file_sets_length_and_does_not_drop_bytes() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("00.bin");
+        let data = vec![0xABu8; 128 * 1024];
+        std::fs::write(&path, &data).unwrap();
+
+        let res = stream_file(&path, "application/octet-stream").await;
+        assert_eq!(res.status(), StatusCode::OK);
+        assert_eq!(res.headers().get(CONTENT_LENGTH).unwrap(), "131072");
+        assert_eq!(
+            res.headers().get(CONTENT_TYPE).unwrap(),
+            "application/octet-stream"
+        );
+        let got = to_bytes(res.into_body(), usize::MAX).await.unwrap();
+        assert_eq!(&got[..], &data[..]);
+    }
+}

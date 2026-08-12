@@ -338,7 +338,7 @@ paths:
   /v1/library/{job_id}/content:
     get:
       summary: Stream a media file for a job (bytes)
-      description: "job_id is validated as a safe id (no path traversal). ?i=N addresses the N-th asset of a batch (default 0 — the historic first file). Content-Type is inferred from the file."
+      description: "job_id is validated as a safe id (no path traversal). ?i=N addresses the N-th asset of a batch (default 0 — the historic first file). Content-Type is inferred from the file. The body is streamed (not buffered in RAM); Content-Length is set."
       parameters:
         - { name: job_id, in: path, required: true, schema: { type: string } }
         - { name: i, in: query, required: false, schema: { type: integer, default: 0 }, description: Asset index within the job }
