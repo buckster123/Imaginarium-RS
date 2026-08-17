@@ -142,7 +142,7 @@ Auth on every `/v1/*` route (any one): `Authorization: Bearer <token>`,
 - Optional spend caps: `[limits] max_usd_per_job` / `max_usd_per_day` (omit or `0` = off).
 - Paid-request token bucket (default **30/min**, burst **10**) per minted token, node env token, and local CLI/MCP. Set `[limits] paid_rpm = 0` to disable. HTTP 429 + `Retry-After`. Polls and craft are not counted.
 
-See [`SECURITY.md`](SECURITY.md) for the trust model and [`BACKLOG.md`](BACKLOG.md) for the live ledger.
+See [`SECURITY.md`](SECURITY.md) for the trust model, [`BACKLOG.md`](BACKLOG.md) for the live ledger, and [`docs/audit/`](docs/audit/) for the 2026-08-17 rematch.
 
 ## Configuration
 

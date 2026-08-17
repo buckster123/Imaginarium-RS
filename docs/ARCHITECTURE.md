@@ -1,5 +1,5 @@
 # Imaginarium-RS — Architecture Plan (v3, defaults folded)
-Date: 2026-07-28 (locked plan) · as-built rematch **2026-08-12**
+Date: 2026-07-28 (locked plan) · as-built rematch **2026-08-12** · full-tree rematch **2026-08-17** (`docs/audit/`)
 Status: **SHIPPED** as v0.1 local-first. This file is the original locked plan; §2 / §8–11 carry as-built notes. Live ledger: `BACKLOG.md`.
 Repo target: `~/Projects/Imaginarium-RS` (GH: `buckster123/Imaginarium-RS`)
 CLI bin: `imaginarium` only (no short alias in v1)
