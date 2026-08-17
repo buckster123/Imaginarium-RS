@@ -12,7 +12,8 @@ You may choose either license.
 
 ## Native Slint app
 
-`crates/imaginarium-slint` (`imaginarium-app`) is **GPL-3.0-only**.
+`crates/imaginarium-slint` (`imaginarium-app`) is **GPL-3.0-only**
+(text: [`LICENSE-GPL`](../LICENSE-GPL)).
 
 Distributing the native GUI binary requires GPL compliance. Distributing only
 the headless node (`imaginarium` CLI / future server binary without the Slint

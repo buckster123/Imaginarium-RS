@@ -125,7 +125,7 @@ p_api += "Image body: model, prompt, n, aspect_ratio, resolution 1k|2k, response
 p_api += "storage_options, user. Image 2.0 ONLY adds quality=low|medium (default medium).\n";
 p_api += "Edit: image XOR images[]; multi-ref tokens <IMAGE_0>. Official docs still max 3 source images.\n";
 p_api += "Video: duration 1-15, aspect_ratio, resolution 480p|720p|1080p, image (I2V) XOR reference_images (R2V),\n";
-p_api += "x-idempotency-key, poll status pending|done|failed|expired. Video 1.5 is I2V-only and the 1080p path.\n";
+p_api += "x-idempotency-key, poll status pending|done|failed|expired. Video 1.5 is T2V/I2V/R2V; 1080p is T2V/I2V only (R2V 720p).\n";
 p_api += "Hunt: wrong endpoints, dropped fields, sending quality on non-2.0, 1080p on legacy video,\n";
 p_api += "I2V+R2V combined, silent clamp vs validate, estimate vs real pricing ($0.02/$0.05/$0.04 image,\n";
 p_api += "$0.05/s video, $0.08/s 1.5), b64 discarded, usage ticks ignored, response parse holes.\n";
